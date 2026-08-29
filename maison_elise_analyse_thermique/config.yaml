@@ -1,0 +1,27 @@
+name: Maison Élise — Analyse thermique
+slug: maison_elise_analyse_thermique
+description: Analyse thermique déterministe en lecture seule, en parallèle de l'existant.
+version: 0.1.0-dev.3
+url: https://github.com/brunofoxmulder/maison-elise-analyse-thermique
+startup: application
+boot: manual
+init: false
+arch:
+  - amd64
+map:
+  - homeassistant_config:ro
+ports:
+  8099/tcp: 8099
+ports_description:
+  8099/tcp: API HTTP de validation
+webui: http://[HOST]:[PORT:8099]/health
+options:
+  service_account_file: /homeassistant/Google/home-assistant-sheets-500717-27eb772ebae7.json
+  spreadsheet_id: ""
+  worksheet_name: Confort thermique
+  timezone: Europe/Paris
+schema:
+  service_account_file: str
+  spreadsheet_id: str
+  worksheet_name: str
+  timezone: str
