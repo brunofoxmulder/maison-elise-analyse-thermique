@@ -26,7 +26,7 @@ from .weather_forecast import (
 )
 
 
-APP_VERSION = "0.1.0-dev.14"
+APP_VERSION = "0.1.0-dev.15"
 APP_TIMEZONE = os.getenv("THERMAL_TIMEZONE", "Europe/Paris")
 
 
