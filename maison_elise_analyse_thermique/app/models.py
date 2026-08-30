@@ -23,3 +23,6 @@ class ThermalSample:
     shutter_terrasse: Optional[float]
     window_open: Optional[bool]
     door_window_open: Optional[bool]
+    # Sonde du groupe extérieur Daikin : contexte de microclimat terrasse
+    # uniquement. Elle ne remplace jamais la température extérieure fiable.
+    temp_outdoor_daikin: Optional[float] = None
