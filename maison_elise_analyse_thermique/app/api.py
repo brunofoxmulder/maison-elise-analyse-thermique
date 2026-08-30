@@ -26,7 +26,7 @@ from .weather_forecast import (
 )
 
 
-APP_VERSION = "0.1.0-dev.10"
+APP_VERSION = "0.1.0-dev.11"
 APP_TIMEZONE = os.getenv("THERMAL_TIMEZONE", "Europe/Paris")
 
 
@@ -61,16 +61,10 @@ def _build_forecast_provider():
 
 def _build_notification_publisher():
     token = os.getenv("SUPERVISOR_TOKEN")
-    notification_service = os.getenv("THERMAL_NOTIFICATION_SERVICE", "").strip()
-    if not notification_service:
-        return UnavailableNotificationPublisher("notification_service_not_configured")
     if not token:
         return UnavailableNotificationPublisher("supervisor_token_unavailable")
     try:
-        return HomeAssistantNotificationPublisher(
-            token=token,
-            service_target=notification_service,
-        )
+        return HomeAssistantNotificationPublisher(token=token)
     except ValueError:
         return UnavailableNotificationPublisher("invalid_notification_configuration")
 
