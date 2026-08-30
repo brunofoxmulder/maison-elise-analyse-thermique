@@ -1,0 +1,30 @@
+name: Validate HAOS app
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        working-directory: maison_elise_analyse_thermique
+        run: pip install -r requirements.txt
+      - name: Compile Python
+        working-directory: maison_elise_analyse_thermique
+        run: python -m compileall -q app
+      - name: Import API and check health contract
+        working-directory: maison_elise_analyse_thermique
+        run: |
+          python - <<'PY'
+          from app.api import health
+          result = health()
+          assert result['status'] == 'ok'
+          assert result['version'] == '0.1.0-dev.3'
+          assert result['read_only'] is True
+          PY
