@@ -55,7 +55,7 @@ class ThermalAnalysisService:
         )
         last_analysis, last_samples = self._prepare_period(last_start, end)
 
-        return build_h2_expertise(
+        expertise = build_h2_expertise(
             previous_samples=previous_samples,
             last_samples=last_samples,
             previous_analysis=previous_analysis,
@@ -69,8 +69,33 @@ class ThermalAnalysisService:
                 "start": last_start.isoformat(),
                 "end": end.isoformat(),
             },
-            forecast_h4=self._forecast_h4(end),
         )
+        expertise["forecast_h4"] = self._forecast_h4(end)
+        expertise["analysis_contract"].update(
+            {
+                "prompt_version": "h2-expert-v1",
+                "forecast_rule": (
+                    "h4_forecast_is_prospective_context_not_a_certainty; "
+                    "missing_forecast_must_be_reported_as_uncertainty_and_never_invented"
+                ),
+                "wind_rule": (
+                    "outdoor_wind_can_inform_ventilation_potential_but_never_proves_indoor_airflow"
+                ),
+                "response_contract": {
+                    "status": ["NORMAL", "VIGILANCE", "ALERTE"],
+                    "sections": [
+                        "Situation",
+                        "Évolution entre les deux heures",
+                        "Explications prudentes",
+                        "Conseil pour les 2 à 4 prochaines heures",
+                        "Points de vigilance",
+                        "Conclusion",
+                    ],
+                    "advice_labels": ["Volets", "Aération", "Daikin"],
+                },
+            }
+        )
+        return expertise
 
     def analyse(self, start, end, compare=None):
         validate_period(start, end)
