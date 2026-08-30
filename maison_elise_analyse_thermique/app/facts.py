@@ -28,6 +28,7 @@ def build_thermal_facts(analysis: dict, max_facts: int = 15) -> dict:
     solar = analysis.get("solar_exposure", {})
     energy = analysis.get("compressor_energy", {})
     hvac = analysis.get("hvac_action_minutes", {})
+    life_state = analysis.get("life_state", {})
 
     sample_count = analysis.get("samples", 0) or 0
     no_data = sample_count == 0
@@ -62,6 +63,27 @@ def build_thermal_facts(analysis: dict, max_facts: int = 15) -> dict:
     cooling_minutes = hvac.get("cooling")
     if cooling_minutes is not None:
         facts.append(_fact("cooling_duration", 90, "Durée de refroidissement", cooling_minutes, "min"))
+
+    if life_state:
+        facts.append(_fact(
+            "life_state",
+            88,
+            "Contexte sommeil/réveil mesuré sur la période",
+            {
+                "awake_minutes": life_state.get("awake_minutes"),
+                "asleep_minutes": life_state.get("asleep_minutes"),
+                "unknown_minutes": life_state.get("unknown_minutes"),
+                "dominant_state": life_state.get("dominant_state"),
+                "transitions": life_state.get("transitions"),
+            },
+            "min",
+            context={
+                "coverage": life_state.get("coverage"),
+                "source": life_state.get("source"),
+                "meaning": "awake=Bruno_reveille; asleep=Bruno_dort",
+                "historical_context_only": True,
+            },
+        ))
 
     cooler = cross.get("cooling_while_outdoor_cooler_than_indoor_minutes", 0) or 0
     if cooler > 0:
