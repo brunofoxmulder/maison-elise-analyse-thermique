@@ -1,12 +1,14 @@
 from datetime import timedelta
 
 from .comparison_facts import build_comparison_facts
+from .compressor_regime import compressor_regime_durations
 from .config import AnalysisConfig
 from .day_profile import build_setpoint_profiles
 from .energy_quality import apply_energy_temporal_coverage
 from .engine import analyse_samples, compare_results
 from .facts import build_thermal_facts
 from .h2_expertise import build_h2_expertise
+from .metier_context import METIER_CONTEXT, METIER_CONTEXT_VERSION
 from .normalization import deduplicate_near_samples
 from .periods import reference_period, validate_period
 from .temporal_quality import apply_period_temporal_coverage
@@ -63,7 +65,7 @@ def _life_state_context(samples):
         "coverage": round(known_minutes / total_minutes, 3) if total_minutes > 0 else 0.0,
         "dominant_state": dominant_state,
         "transitions": transitions,
-        "source": "historical_sheet_column_Prisse_de_comptage".replace("Prisse", "Prise"),
+        "source": "historical_sheet_column_Prise_de_comptage",
         "interpretation": "awake_true_asleep_false_context_only",
     }
 
@@ -80,6 +82,7 @@ class ThermalAnalysisService:
         apply_period_temporal_coverage(analysis, samples, start, end)
         apply_energy_temporal_coverage(analysis, samples, start, end)
         analysis["life_state"] = _life_state_context(samples)
+        analysis["compressor_regimes"] = compressor_regime_durations(samples)
         analysis["input_quality"] = input_quality
         analysis["raw_samples"] = len(raw_samples)
         return analysis, samples
@@ -101,22 +104,11 @@ class ThermalAnalysisService:
         try:
             return self.forecast_provider.get_h4(end)
         except Exception:
-            # Forecast context must never make the deterministic retrospective
-            # analysis fail. Missing weather is exposed as uncertainty instead.
             return UnavailableWeatherForecastProvider("forecast_provider_error").get_h4(end)
 
     def _build_h2(self, requested_start, requested_end):
-        """Build H-2 on the latest actual observation, like the validated V5 Pyscript.
-
-        Generic App periods remain half-open. H-2 is intentionally different:
-        each one-hour segment includes both of its boundaries when the sample is
-        available. The H-1 midpoint is therefore shared, giving 13 points and
-        12 five-minute intervals for a complete hour at the production cadence.
-        """
+        """Build H-2 on the latest actual observation, like the validated V5 Pyscript."""
         search_start = requested_end - timedelta(hours=H2_SOURCE_LOOKBACK_HOURS)
-        # DataSource.load() is half-open. One microsecond allows an observation
-        # stamped exactly at requested_end to be considered without admitting
-        # later observations.
         raw_candidates = self.source.load(
             search_start,
             requested_end + timedelta(microseconds=1),
@@ -208,6 +200,7 @@ class ThermalAnalysisService:
         expertise["analysis_contract"].update(
             {
                 "prompt_version": "h2-expert-v1",
+                "metier_context_version": METIER_CONTEXT_VERSION,
                 "h2_result_rule": (
                     "when_expertise_h2_is_present_use_it_as_the_primary_H2_material; "
                     "top_level_analysis_is_the_legacy_two_hour_aggregate_and_is_not_the_primary_H2_summary"
@@ -233,8 +226,9 @@ class ThermalAnalysisService:
                     "do_not_call_it_bad_regulation_without_supporting_evidence"
                 ),
                 "compressor_rule": (
-                    "assess_daikin_with_hvac_action_frequency_energy_indoor_temperature_active_setpoint_"
-                    "reliable_outdoor_temperature_openings_and_solar_context_together"
+                    "assess_daikin_with_hvac_action_frequency_regime_durations_energy_indoor_temperature_active_setpoint_"
+                    "reliable_outdoor_temperature_openings_and_solar_context_together; "
+                    "hvac_action_cooling_or_heating_does_not_mean_continuous_compressor_operation"
                 ),
                 "dehumidification_rule": (
                     "if_indoor_temperature_is_near_setpoint_while_cooling_continues_and_humidity_is_high_"
@@ -258,7 +252,7 @@ class ThermalAnalysisService:
                 "life_state_rule": (
                     "use_the_historical_life_state_from_the_analyzed_period; "
                     "awake_means_Bruno_is_awake_and_asleep_means_Bruno_is_sleeping; "
-                    "never_replace_historical_context_with_the_current_Home_Assistant_state"
+                    "unknown_means_unknown; never_replace_historical_context_with_the_current_Home_Assistant_state"
                 ),
                 "response_contract": {
                     "status": ["NORMAL", "VIGILANCE", "ALERTE"],
@@ -295,11 +289,9 @@ class ThermalAnalysisService:
             "analysis": current,
             "thermal_facts": current_facts,
             "setpoint_profiles": build_setpoint_profiles(current_samples),
+            "metier_context": METIER_CONTEXT,
         }
 
-        # Le profil H-2 est enrichi automatiquement lorsque le client demande
-        # environ deux heures. La dernière heure est le sujet principal ;
-        # l'heure précédente est uniquement la référence immédiate.
         if self._is_h2_period(start, end):
             out["expertise_h2"] = self._build_h2(start, end)
 
