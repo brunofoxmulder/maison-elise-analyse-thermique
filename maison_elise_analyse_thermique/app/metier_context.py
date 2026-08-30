@@ -40,6 +40,14 @@ METIER_CONTEXT = {
         "regime_semantics": "practical_context_not_manufacturer_rating_not_Hz_to_W_or_kWh_conversion",
         "power_w_rule": "instantaneous_W_values_are_not_used_for_current_thermal_expertise",
     },
+    "reporting": {
+        "day_compressor_solicitation": (
+            "for_a_day_report_show_the_deterministic_compressor_regime_durations_when_available; "
+            "list_stopped_very_low_low_medium_and_high_minutes_and_unknown_minutes_if_nonzero; "
+            "also_keep_mean_frequency_and_dominant_regime; do_not_replace_this_detail_with_only_one_average"
+        ),
+        "source_rule": "use_analysis.compressor_regimes_and_thermal_facts_compressor_regime_durations_without_recalculation",
+    },
     "outdoor_temperature": {
         "reference": "general_outdoor_context_used_by_App",
         "daikin": "terrace_outdoor_unit_microclimate_only",
