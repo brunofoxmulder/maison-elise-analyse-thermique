@@ -27,10 +27,10 @@ class HomeAssistantNotificationPublisher:
 
     L'App ne rédige pas l'expertise. Elle reçoit un rapport structuré lié à une
     analyse déterministe, le met en forme et appelle ``persistent_notification.create``.
-    Si ``mail_service`` est configuré, elle transmet ensuite exactement le même
-    rapport au service ``notify.*`` de Home Assistant, par exemple un notifier
-    SMTP déjà géré par HA. L'App ne contient aucun serveur, mot de passe ni
-    destinataire SMTP et ne commande aucun équipement.
+    Si ``mail_entity`` est configuré, elle transmet ensuite exactement le même
+    rapport via l'action moderne ``notify.send_message`` vers une entité
+    ``notify.*`` (par exemple SMTP). L'App ne contient aucun serveur, mot de
+    passe ni destinataire SMTP et ne commande aucun équipement.
     """
 
     def __init__(
@@ -38,7 +38,7 @@ class HomeAssistantNotificationPublisher:
         token: str,
         *,
         notification_id: str = DEFAULT_NOTIFICATION_ID,
-        mail_service: str = "",
+        mail_entity: str = "",
         base_url: str = "http://supervisor/core/api",
         timeout_seconds: float = 5.0,
         transport: httpx.BaseTransport | None = None,
@@ -47,15 +47,15 @@ class HomeAssistantNotificationPublisher:
             raise ValueError("Home Assistant token is required")
         if not isinstance(notification_id, str) or not notification_id.strip():
             raise ValueError("notification_id is required")
-        if not isinstance(mail_service, str):
-            raise ValueError("mail_service must be a string")
-        normalized_mail_service = mail_service.strip()
-        if normalized_mail_service and not normalized_mail_service.startswith("notify."):
-            raise ValueError("mail_service must use a Home Assistant notify.* service")
+        if not isinstance(mail_entity, str):
+            raise ValueError("mail_entity must be a string")
+        normalized_mail_entity = mail_entity.strip()
+        if normalized_mail_entity and not normalized_mail_entity.startswith("notify."):
+            raise ValueError("mail_entity must be a Home Assistant notify.* entity")
 
         self.token = token
         self.notification_id = notification_id.strip()
-        self.mail_service = normalized_mail_service
+        self.mail_entity = normalized_mail_entity
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = float(timeout_seconds)
         self.transport = transport
@@ -69,21 +69,21 @@ class HomeAssistantNotificationPublisher:
         }
 
     def _publish_mail(self, client: httpx.Client, report: dict, rendered: str) -> dict:
-        if not self.mail_service:
+        if not self.mail_entity:
             return {
                 "enabled": False,
                 "status": "disabled",
-                "reason": "mail_service_not_configured",
+                "reason": "mail_entity_not_configured",
             }
 
-        service_name = self.mail_service.split(".", 1)[1]
         payload = {
+            "entity_id": self.mail_entity,
             "title": notification_title(report),
             "message": rendered,
         }
         try:
             response = client.post(
-                f"{self.base_url}/services/notify/{service_name}",
+                f"{self.base_url}/services/notify/send_message",
                 headers=self._headers(),
                 json=payload,
             )
@@ -92,13 +92,15 @@ class HomeAssistantNotificationPublisher:
             return {
                 "enabled": True,
                 "status": "error",
-                "service": self.mail_service,
+                "action": "notify.send_message",
+                "entity_id": self.mail_entity,
                 "error_type": type(exc).__name__,
             }
         return {
             "enabled": True,
             "status": "sent",
-            "service": self.mail_service,
+            "action": "notify.send_message",
+            "entity_id": self.mail_entity,
         }
 
     def publish(self, report: dict) -> dict:
@@ -140,7 +142,7 @@ class HomeAssistantNotificationPublisher:
                 "analysis_id": analysis_id,
                 "error_type": type(exc).__name__,
                 "mail": {
-                    "enabled": bool(self.mail_service),
+                    "enabled": bool(self.mail_entity),
                     "status": "not_attempted",
                     "reason": "persistent_notification_failed",
                 },
