@@ -56,9 +56,14 @@ class RecordingPublisher:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    def publish(self, result: dict) -> dict:
-        self.calls.append(result)
-        return {"enabled": True, "status": "sent", "service": "notify.test"}
+    def publish(self, report: dict) -> dict:
+        self.calls.append(report)
+        return {
+            "enabled": True,
+            "status": "sent",
+            "service": "persistent_notification.create",
+            "analysis_id": report["analysis_id"],
+        }
 
 
 class NeverLoadSource:
@@ -100,6 +105,28 @@ async def _session_for(service, now_provider=None, notification_publisher=None):
                     yield session
 
 
+def _expert_payload(analysis_id: str) -> dict:
+    return {
+        "analysis_id": analysis_id,
+        "status": "NORMAL",
+        "short_response": (
+            "Le salon reste stable à 21,3 °C près de la consigne. "
+            "Le Daikin module faiblement et aucune action particulière n'est nécessaire. "
+            "L'extérieur devrait se rafraîchir dans les prochaines heures."
+        ),
+        "situation": "Le salon est stable à 21,3 °C, proche de la consigne de 21 °C.",
+        "evolution": "La dernière heure est stable par rapport à l'heure précédente.",
+        "energy": "Le Daikin a consommé 0,20 kWh sur la dernière heure à faible fréquence compresseur.",
+        "explanations": "Fait : la température est stable. Hypothèse : la modulation suffit à maintenir la consigne.",
+        "shutters_advice": "Aucune action particulière ; les volets peuvent rester ouverts hors soleil direct.",
+        "ventilation_advice": "Pas d'intérêt thermique immédiat à ouvrir ; réévaluer avec le rafraîchissement extérieur.",
+        "daikin_advice": "Conserver le fonctionnement actuel tant que le confort reste stable.",
+        "outlook": "La température extérieure devrait baisser durant l'horizon H+4.",
+        "vigilance": "Aucun point de vigilance particulier pour le moment.",
+        "conclusion": "Le confort est maîtrisé et stable ; aucune action immédiate n'est nécessaire.",
+    }
+
+
 def test_legacy_http_contract_is_preserved() -> None:
     with TestClient(app) as client:
         response = client.get("/health")
@@ -135,15 +162,19 @@ def test_initialize_twice_like_home_assistant_config_flow() -> None:
     asyncio.run(scenario())
 
 
-def test_list_tools_exposes_ergonomic_analysis_contract() -> None:
+def test_list_tools_exposes_analysis_publish_and_reuse_contract() -> None:
     async def scenario() -> None:
         async with _session_for(RecordingService()) as session:
             await session.initialize()
             tools = await session.list_tools()
-            assert len(tools.tools) == 1
-            tool = tools.tools[0]
-            assert tool.name == "AnalyseThermique"
-            assert set(tool.inputSchema["properties"]) == {
+            assert {tool.name for tool in tools.tools} == {
+                "AnalyseThermique",
+                "PublierRapportThermique",
+                "DernierRapportThermique",
+            }
+            by_name = {tool.name: tool for tool in tools.tools}
+            analyse = by_name["AnalyseThermique"]
+            assert set(analyse.inputSchema["properties"]) == {
                 "mode",
                 "start",
                 "end",
@@ -152,29 +183,48 @@ def test_list_tools_exposes_ergonomic_analysis_contract() -> None:
                 "start_time",
                 "end_time",
             }
-            assert set(tool.inputSchema["required"]) == {"mode"}
-            assert tool.inputSchema["properties"]["mode"]["enum"] == [
+            assert set(analyse.inputSchema["required"]) == {"mode"}
+            assert analyse.inputSchema["properties"]["mode"]["enum"] == [
                 "current_h2",
                 "relative_day",
                 "explicit",
-                "last_result",
             ]
-            assert "Analyse heure" in tool.description
-            assert "mode=current_h2" in tool.description
-            assert "mode=relative_day" in tool.description
-            assert "donne-moi le détail" in tool.description
-            assert "mode=last_result" in tool.description
-            assert "constat, analyse prudente" in tool.description
-            assert "0 %=fermé, 100 %=ouvert" in tool.description
-            assert "ne jamais parler de demain" in tool.description
+            assert "Analyse heure" in analyse.description
+            assert "PublierRapportThermique" in analyse.description
+            assert "UNE SEULE expertise" in analyse.description
+            assert "DernierRapportThermique" in analyse.description
+            assert "0 %=fermé, 100 %=ouvert" in analyse.description
+
+            publish = by_name["PublierRapportThermique"]
+            assert set(publish.inputSchema["required"]) == {
+                "analysis_id",
+                "status",
+                "short_response",
+                "situation",
+                "evolution",
+                "energy",
+                "explanations",
+                "shutters_advice",
+                "ventilation_advice",
+                "daikin_advice",
+                "outlook",
+                "vigilance",
+                "conclusion",
+            }
+            assert "MÊME expertise" in publish.description
+            assert "Pyscript" in publish.description
+
+            detail = by_name["DernierRapportThermique"]
+            assert "ne pas recalculer" in detail.description
 
     asyncio.run(scenario())
 
 
-def test_call_tool_returns_core_json_plus_interaction_contract() -> None:
+def test_analyse_returns_deterministic_json_but_does_not_publish_before_expertise() -> None:
     async def scenario() -> None:
         service = RecordingService()
-        async with _session_for(service) as session:
+        publisher = RecordingPublisher()
+        async with _session_for(service, notification_publisher=publisher) as session:
             await session.initialize()
             result = await session.call_tool(
                 "AnalyseThermique",
@@ -186,23 +236,20 @@ def test_call_tool_returns_core_json_plus_interaction_contract() -> None:
             )
 
         assert result.isError is False
-        assert result.structuredContent is not None
         structured = result.structuredContent
         assert structured["period"] == {
             "start": "2026-08-29T00:00:00+02:00",
             "end": "2026-08-30T00:00:00+02:00",
         }
         assert structured["analysis"] == {"marker": "deterministic"}
-        assert structured["interaction_contract"]["voice_short_response"]["order"] == [
-            "constat",
-            "analyse",
-            "preconisation",
-            "a_venir",
-        ]
-        assert structured["interaction_contract"]["shutter_position_semantics"]["100"] == "fully_open"
-        assert structured["automatic_notification"]["status"] == "disabled"
+        assert structured["analysis_id"].startswith("thermal-")
+        assert structured["expert_report_publication"]["status"] == "optional"
+        assert structured["interaction_contract"]["expertise_pipeline"]["principle"] == (
+            "one_app_calculation_then_one_llm_expertise_then_two_outputs"
+        )
         assert json.loads(result.content[0].text) == structured
         assert len(service.calls) == 1
+        assert publisher.calls == []
 
     asyncio.run(scenario())
 
@@ -229,12 +276,17 @@ def test_call_tool_forwards_optional_comparison() -> None:
     asyncio.run(scenario())
 
 
-def test_current_h2_uses_app_clock_and_ignores_llm_dates_and_compare() -> None:
+def test_current_h2_uses_app_clock_and_requires_post_expertise_publication() -> None:
     async def scenario() -> None:
         clear_diagnostics()
         service = RecordingService()
+        publisher = RecordingPublisher()
         fixed_now = datetime.fromisoformat("2026-08-30T18:30:00+02:00")
-        async with _session_for(service, now_provider=lambda: fixed_now) as session:
+        async with _session_for(
+            service,
+            now_provider=lambda: fixed_now,
+            notification_publisher=publisher,
+        ) as session:
             await session.initialize()
             result = await session.call_tool(
                 "AnalyseThermique",
@@ -252,7 +304,15 @@ def test_current_h2_uses_app_clock_and_ignores_llm_dates_and_compare() -> None:
         assert start == datetime.fromisoformat("2026-08-30T16:30:00+02:00")
         assert end == fixed_now
         assert compare is None
-        assert result.structuredContent["interaction_context"]["voice_request_alias"] == "Analyse heure"
+        structured = result.structuredContent
+        assert structured["interaction_context"]["voice_request_alias"] == "Analyse heure"
+        assert structured["expert_report_publication"] == {
+            "required": True,
+            "status": "pending_expertise",
+            "next_tool": "PublierRapportThermique",
+            "rule": "publication_occurs_only_after_the_LLM_has_completed_the_single_expertise",
+        }
+        assert publisher.calls == []
         text = diagnostics_text()
         assert 'MCP_DIAG resolution' in text
         assert '"mode":"current_h2"' in text
@@ -260,6 +320,78 @@ def test_current_h2_uses_app_clock_and_ignores_llm_dates_and_compare() -> None:
         assert '"resolved_start":"2026-08-30T16:30:00+02:00"' in text
         assert '"resolved_end":"2026-08-30T18:30:00+02:00"' in text
         assert '"resolved_compare":null' in text
+
+    asyncio.run(scenario())
+
+
+def test_hourly_report_is_published_once_and_detail_reuses_same_expertise() -> None:
+    async def scenario() -> None:
+        service = RecordingService()
+        publisher = RecordingPublisher()
+        fixed_now = datetime.fromisoformat("2026-08-30T20:00:00+02:00")
+        async with _session_for(
+            service,
+            now_provider=lambda: fixed_now,
+            notification_publisher=publisher,
+        ) as session:
+            await session.initialize()
+            analysed = await session.call_tool("AnalyseThermique", {"mode": "current_h2"})
+            analysis_id = analysed.structuredContent["analysis_id"]
+            published = await session.call_tool(
+                "PublierRapportThermique",
+                _expert_payload(analysis_id),
+            )
+            detail = await session.call_tool("DernierRapportThermique", {})
+
+        assert analysed.isError is False
+        assert published.isError is False
+        assert detail.isError is False
+        assert len(service.calls) == 1
+        assert len(publisher.calls) == 1
+        report = publisher.calls[0]
+        assert report["analysis_id"] == analysis_id
+        assert report["status"] == "NORMAL"
+        assert report["short_response"] == _expert_payload(analysis_id)["short_response"]
+        assert published.structuredContent["publication"]["status"] == "sent"
+        assert published.structuredContent["short_response"] == report["short_response"]
+        assert "## Situation" in published.structuredContent["full_report"]
+        assert "## ⚡ Énergie Daikin" in published.structuredContent["full_report"]
+        assert "**Volets :**" in published.structuredContent["full_report"]
+        assert detail.structuredContent["full_report"] == published.structuredContent["full_report"]
+        assert detail.structuredContent["reused_previous_expertise"] is True
+        assert detail.structuredContent["recalculation"] is False
+        assert detail.structuredContent["new_expertise"] is False
+        assert detail.structuredContent["new_notification"] is False
+
+    asyncio.run(scenario())
+
+
+def test_publish_rejects_report_for_wrong_analysis_id() -> None:
+    async def scenario() -> None:
+        service = RecordingService()
+        publisher = RecordingPublisher()
+        async with _session_for(service, notification_publisher=publisher) as session:
+            await session.initialize()
+            await session.call_tool("AnalyseThermique", {"mode": "current_h2"})
+            published = await session.call_tool(
+                "PublierRapportThermique",
+                _expert_payload("thermal-wrong"),
+            )
+
+        assert published.isError is True
+        assert "analysis_id does not match" in published.content[0].text
+        assert publisher.calls == []
+
+    asyncio.run(scenario())
+
+
+def test_detail_without_published_expertise_is_rejected() -> None:
+    async def scenario() -> None:
+        async with _session_for(RecordingService()) as session:
+            await session.initialize()
+            detail = await session.call_tool("DernierRapportThermique", {})
+        assert detail.isError is True
+        assert "no expert thermal report" in detail.content[0].text
 
     asyncio.run(scenario())
 
@@ -295,36 +427,6 @@ def test_relative_day_resolves_today_and_yesterday_with_app_clock() -> None:
         assert service.calls[0][1] == datetime.fromisoformat("2026-08-30T17:00:00+02:00")
         assert service.calls[1][0] == datetime.fromisoformat("2026-08-29T08:00:00+02:00")
         assert service.calls[1][1] == datetime.fromisoformat("2026-08-29T15:00:00+02:00")
-
-    asyncio.run(scenario())
-
-
-def test_last_result_reuses_same_analysis_without_recalculation_or_notification() -> None:
-    async def scenario() -> None:
-        service = RecordingService()
-        publisher = RecordingPublisher()
-        async with _session_for(service, notification_publisher=publisher) as session:
-            await session.initialize()
-            first = await session.call_tool(
-                "AnalyseThermique",
-                {
-                    "mode": "explicit",
-                    "start": "2026-08-29T13:00:00+02:00",
-                    "end": "2026-08-29T17:00:00+02:00",
-                },
-            )
-            detail = await session.call_tool("AnalyseThermique", {"mode": "last_result"})
-
-        assert first.isError is False
-        assert detail.isError is False
-        assert len(service.calls) == 1
-        assert len(publisher.calls) == 1
-        assert detail.structuredContent["period"] == first.structuredContent["period"]
-        assert detail.structuredContent["interaction_context"] == {
-            "reused_previous_analysis": True,
-            "fresh_analysis": False,
-            "automatic_notification_repeated": False,
-        }
 
     asyncio.run(scenario())
 
