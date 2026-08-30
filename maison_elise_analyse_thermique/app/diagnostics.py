@@ -26,6 +26,34 @@ def _append(kind: str, payload: dict) -> None:
     _LOGGER.info(line)
 
 
+def _analysis_snapshot(period: dict | None, analysis: dict | None) -> dict:
+    analysis = analysis if isinstance(analysis, dict) else {}
+    input_quality = analysis.get("input_quality")
+    input_quality = input_quality if isinstance(input_quality, dict) else {}
+    indoor = analysis.get("temperature_indoor")
+    indoor = indoor if isinstance(indoor, dict) else {}
+    outdoor = analysis.get("temperature_outdoor_reference")
+    outdoor = outdoor if isinstance(outdoor, dict) else {}
+    quality = analysis.get("quality")
+    quality = quality if isinstance(quality, dict) else {}
+    period_coverage = analysis.get("period_coverage")
+    period_coverage = period_coverage if isinstance(period_coverage, dict) else {}
+
+    return {
+        "period": period,
+        "raw_samples": analysis.get("raw_samples"),
+        "samples_after_dedup": analysis.get("samples"),
+        "near_duplicate_dropped_count": input_quality.get("near_duplicate_dropped_count"),
+        "temperature_indoor_mean_c": indoor.get("mean"),
+        "temperature_indoor_coverage": indoor.get("coverage"),
+        "temperature_outdoor_mean_c": outdoor.get("mean"),
+        "temperature_outdoor_coverage": outdoor.get("coverage"),
+        "outdoor_temperature_suspect_count": quality.get("outdoor_temperature_suspect_count"),
+        "outdoor_temperature_rejected_count": quality.get("outdoor_temperature_rejected_count"),
+        "period_coverage": period_coverage.get("coverage"),
+    }
+
+
 def record_request(start: datetime, end: datetime, compare: str | None) -> None:
     _append(
         "request",
@@ -38,12 +66,24 @@ def record_request(start: datetime, end: datetime, compare: str | None) -> None:
 
 
 def record_result(result: dict) -> None:
-    comparison = result.get("comparison") if isinstance(result, dict) else None
+    result = result if isinstance(result, dict) else {}
+    comparison = result.get("comparison")
     comparison = comparison if isinstance(comparison, dict) else {}
+
+    _append(
+        "current_analysis",
+        _analysis_snapshot(result.get("period"), result.get("analysis")),
+    )
+    if comparison:
+        _append(
+            "reference_analysis",
+            _analysis_snapshot(comparison.get("period"), comparison.get("analysis")),
+        )
+
     _append(
         "result",
         {
-            "period": result.get("period") if isinstance(result, dict) else None,
+            "period": result.get("period"),
             "comparison_mode": comparison.get("mode"),
             "comparison_period": comparison.get("period"),
             "delta": comparison.get("delta"),

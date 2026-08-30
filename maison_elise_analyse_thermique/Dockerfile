@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-ARG BUILD_VERSION=0.1.0-dev.5
+ARG BUILD_VERSION=0.1.0-dev.6
 ARG BUILD_ARCH=amd64
 
 LABEL \
