@@ -71,6 +71,7 @@ def _row_to_sample(row, tz: ZoneInfo) -> ThermalSample | None:
         shutter_terrasse=_float(row.get("Volet_terrasse")),
         window_open=_bool(row.get("Fenêtre_salon")),
         door_window_open=_bool(row.get("Porte_fenêtre")),
+        temp_outdoor_daikin=_float(row.get("Température_extérieure_Daikin")),
     )
 
 

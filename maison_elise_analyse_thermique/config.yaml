@@ -1,11 +1,12 @@
 name: Maison Élise — Analyse thermique
 slug: maison_elise_analyse_thermique
 description: Analyse thermique déterministe en lecture seule, en parallèle de l'existant.
-version: 0.1.0-dev.7
+version: 0.1.0-dev.8
 url: https://github.com/brunofoxmulder/maison-elise-analyse-thermique
 startup: application
 boot: manual
 init: false
+homeassistant_api: true
 arch:
   - amd64
 map:
@@ -20,8 +21,10 @@ options:
   spreadsheet_id: ""
   worksheet_name: Confort thermique
   timezone: Europe/Paris
+  weather_entity: weather.dammarie_les_lys
 schema:
   service_account_file: str
   spreadsheet_id: str
   worksheet_name: str
   timezone: str
+  weather_entity: str?

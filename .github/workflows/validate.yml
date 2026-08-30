@@ -21,13 +21,25 @@ jobs:
       - name: Run tests
         working-directory: maison_elise_analyse_thermique
         run: python -m pytest -q
-      - name: Import API and check health contract
+      - name: Import API and check health/version contracts
         working-directory: maison_elise_analyse_thermique
         run: |
           python - <<'PY'
-          from app.api import health
+          from pathlib import Path
+          import re
+
+          from app.api import APP_VERSION, health
+
           result = health()
           assert result['status'] == 'ok'
-          assert result['version'] == '0.1.0-dev.7'
+          assert result['version'] == APP_VERSION
           assert result['read_only'] is True
+
+          config = Path('config.yaml').read_text(encoding='utf-8')
+          match = re.search(r'^version:\s*([^\s]+)\s*$', config, re.MULTILINE)
+          assert match is not None
+          assert match.group(1) == APP_VERSION
+
+          dockerfile = Path('Dockerfile').read_text(encoding='utf-8')
+          assert f'ARG BUILD_VERSION={APP_VERSION}' in dockerfile
           PY

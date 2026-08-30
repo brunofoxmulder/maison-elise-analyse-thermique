@@ -1,31 +1,23 @@
 # Maison Élise — Analyse thermique
 
-Dépôt public de distribution de l'App Home Assistant OS de validation parallèle.
+App HAOS de lecture seule dédiée à l’analyse thermique de Maison Cognitive.
 
-## Périmètre
+Architecture : Google Sheets → moteur déterministe → JSON structuré → façade MCP native Home Assistant → agent conversationnel.
 
-- moteur thermique déterministe en lecture seule ;
-- lecture de l'onglet Google Sheets `Confort thermique` ;
-- API `/health`, `/analyse` et `/analyse/natural` ;
-- aucune commande Home Assistant ;
-- démarrage manuel ;
-- architecture `amd64` uniquement pour cette phase de test.
+## État courant
 
-Le contrat de formulation LLM du dépôt privé Maison Cognitive n'est pas nécessaire au benchmark HAOS et n'est volontairement pas distribué ici. Cette App sert d'abord à valider le moteur déterministe contre les données réelles.
+- baseline terrain validée : `0.1.0-dev.7` ;
+- développement en cours : `0.1.0-dev.8`, profil H−2 ;
+- H−2 = dernière heure analysée en priorité, heure précédente comme référence immédiate ;
+- météo H+4 lue depuis Home Assistant via `weather.get_forecasts`, facultative et non bloquante ;
+- prompt expert versionné : `docs/h2-expert-prompt-v1.md`.
 
-## Installation
+## Principes de sécurité et de gouvernance
 
-Ajouter ce dépôt dans le Store des Apps Home Assistant :
+- aucune commande d’équipement ;
+- calculs numériques effectués par l’App, pas par le LLM ;
+- température extérieure Daikin = microclimat terrasse uniquement, jamais référence météo ni preuve de difficulté compresseur ;
+- l’accès `homeassistant_api` de dev.8 est utilisé uniquement pour la lecture de la météo et doit rester explicitement tracé/revu ;
+- les profils horaire, hebdomadaire et mensuel sont des produits distincts.
 
-`https://github.com/brunofoxmulder/maison-elise-analyse-thermique`
-
-Puis installer **Maison Élise — Analyse thermique**.
-
-Avant le premier démarrage, renseigner dans la configuration de l'App :
-
-- `service_account_file` : chemin local du fichier de compte de service Google déjà présent dans Home Assistant ;
-- `spreadsheet_id` : identifiant du classeur contenant `Confort thermique` ;
-- `worksheet_name` : `Confort thermique` ;
-- `timezone` : `Europe/Paris`.
-
-L'App monte la configuration Home Assistant en lecture seule et n'écrit pas dans Home Assistant.
+Voir `docs/h2-expertise-contract-v1.md` pour le contrat complet.

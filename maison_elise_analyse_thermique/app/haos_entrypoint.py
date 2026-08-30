@@ -5,6 +5,9 @@ import os
 from pathlib import Path
 
 
+DEFAULT_WEATHER_ENTITY = "weather.dammarie_les_lys"
+
+
 def build_runtime_env(options: dict) -> dict[str, str]:
     required = {
         "service_account_file": "THERMAL_GOOGLE_SERVICE_ACCOUNT_FILE",
@@ -18,6 +21,13 @@ def build_runtime_env(options: dict) -> dict[str, str]:
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"option HAOS manquante ou vide: {option_name}")
         env[env_name] = value.strip()
+
+    # New in dev.8. Keep a default so an update from dev.7 does not fail at
+    # startup solely because the existing options.json predates this setting.
+    weather_entity = options.get("weather_entity", DEFAULT_WEATHER_ENTITY)
+    if not isinstance(weather_entity, str) or not weather_entity.strip():
+        weather_entity = DEFAULT_WEATHER_ENTITY
+    env["THERMAL_WEATHER_ENTITY"] = weather_entity.strip()
     return env
 
 

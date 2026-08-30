@@ -16,9 +16,13 @@ from .google_sheets_source import GoogleSheetsDataSource
 from .mcp_server import build_mcp_server
 from .natural_periods import resolve_natural_period
 from .service import ThermalAnalysisService
+from .weather_forecast import (
+    HomeAssistantWeatherForecastProvider,
+    UnavailableWeatherForecastProvider,
+)
 
 
-APP_VERSION = "0.1.0-dev.7"
+APP_VERSION = "0.1.0-dev.8"
 
 
 def _build_source():
@@ -37,8 +41,23 @@ def _build_source():
     return InMemoryDataSource([])
 
 
+def _build_forecast_provider():
+    token = os.getenv("SUPERVISOR_TOKEN")
+    weather_entity = os.getenv("THERMAL_WEATHER_ENTITY", "weather.dammarie_les_lys")
+    if not token:
+        return UnavailableWeatherForecastProvider("supervisor_token_unavailable")
+    try:
+        return HomeAssistantWeatherForecastProvider(
+            token=token,
+            entity_id=weather_entity,
+        )
+    except ValueError:
+        return UnavailableWeatherForecastProvider("invalid_weather_configuration")
+
+
 source = _build_source()
-service = ThermalAnalysisService(source)
+forecast_provider = _build_forecast_provider()
+service = ThermalAnalysisService(source, forecast_provider=forecast_provider)
 mcp_server = build_mcp_server(service)
 
 
