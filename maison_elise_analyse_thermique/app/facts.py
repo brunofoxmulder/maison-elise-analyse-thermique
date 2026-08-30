@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .compressor_regime import compressor_regime_context
+
 
 def _fact(fact_id, priority, label, value, unit=None, context=None):
     item = {
@@ -83,7 +85,15 @@ def build_thermal_facts(analysis: dict, max_facts: int = 15) -> dict:
 
     freq = cross.get("compressor_frequency_mean_during_cooling")
     if freq is not None:
-        facts.append(_fact("compressor_frequency_cooling", 75, "Fréquence compresseur moyenne pendant le refroidissement", freq, "Hz"))
+        freq_summary = analysis.get("compressor_frequency", {})
+        facts.append(_fact(
+            "compressor_frequency_cooling",
+            75,
+            "Fréquence compresseur moyenne pendant le refroidissement",
+            freq,
+            "Hz",
+            context=compressor_regime_context(freq, freq_summary.get("max")),
+        ))
 
     effective_sun = solar.get("effective_minutes", 0) or 0
     if effective_sun > 0:
