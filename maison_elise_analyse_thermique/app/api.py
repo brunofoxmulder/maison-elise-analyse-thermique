@@ -15,6 +15,10 @@ from .diagnostics import diagnostics_text
 from .google_sheets_source import GoogleSheetsDataSource
 from .mcp_server import build_mcp_server
 from .natural_periods import resolve_natural_period
+from .notification_publisher import (
+    HomeAssistantNotificationPublisher,
+    UnavailableNotificationPublisher,
+)
 from .service import ThermalAnalysisService
 from .weather_forecast import (
     HomeAssistantWeatherForecastProvider,
@@ -22,7 +26,7 @@ from .weather_forecast import (
 )
 
 
-APP_VERSION = "0.1.0-dev.9"
+APP_VERSION = "0.1.0-dev.10"
 APP_TIMEZONE = os.getenv("THERMAL_TIMEZONE", "Europe/Paris")
 
 
@@ -55,10 +59,31 @@ def _build_forecast_provider():
         return UnavailableWeatherForecastProvider("invalid_weather_configuration")
 
 
+def _build_notification_publisher():
+    token = os.getenv("SUPERVISOR_TOKEN")
+    notification_service = os.getenv("THERMAL_NOTIFICATION_SERVICE", "").strip()
+    if not notification_service:
+        return UnavailableNotificationPublisher("notification_service_not_configured")
+    if not token:
+        return UnavailableNotificationPublisher("supervisor_token_unavailable")
+    try:
+        return HomeAssistantNotificationPublisher(
+            token=token,
+            service_target=notification_service,
+        )
+    except ValueError:
+        return UnavailableNotificationPublisher("invalid_notification_configuration")
+
+
 source = _build_source()
 forecast_provider = _build_forecast_provider()
+notification_publisher = _build_notification_publisher()
 service = ThermalAnalysisService(source, forecast_provider=forecast_provider)
-mcp_server = build_mcp_server(service, timezone=APP_TIMEZONE)
+mcp_server = build_mcp_server(
+    service,
+    timezone=APP_TIMEZONE,
+    notification_publisher=notification_publisher,
+)
 
 
 @asynccontextmanager
@@ -116,7 +141,7 @@ pre {{ white-space: pre-wrap; overflow-wrap: anywhere; background: #000; padding
 </head>
 <body>
 <h2>Maison Élise — Analyse thermique</h2>
-<p>Version {APP_VERSION} · lecture seule · {data_source}</p>
+<p>Version {APP_VERSION} · données thermiques en lecture seule · {data_source}</p>
 <button type="button" onclick="copyDiagnostic()">Copier le diagnostic</button>
 <span id="copy-status" aria-live="polite"></span>
 <pre id="diag">{safe_text}</pre>
