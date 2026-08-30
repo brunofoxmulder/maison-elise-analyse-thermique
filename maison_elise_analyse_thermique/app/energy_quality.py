@@ -52,7 +52,14 @@ def apply_energy_temporal_coverage(
     energy["coverage_rule"] = "usable_counter_intervals_over_requested_period"
     energy["period_fact_allowed"] = temporal_coverage >= minimum_coverage_for_period_fact
     energy["minimum_coverage_for_period_fact"] = minimum_coverage_for_period_fact
-    return analysis
+
+    return apply_midnight_cumulative_counter_total(
+        analysis,
+        rows,
+        start,
+        end,
+        max_end_lag_minutes=max_gap_minutes,
+    )
 
 
 def apply_midnight_cumulative_counter_total(
