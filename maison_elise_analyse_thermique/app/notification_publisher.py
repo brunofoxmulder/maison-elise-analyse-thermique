@@ -8,17 +8,18 @@ from .notification_report import build_notification_report, notification_title
 
 
 def _result_key(result: dict) -> str:
+    comparison = result.get("comparison") or {}
+    comparison_mode = comparison.get("mode")
     expertise = result.get("expertise_h2")
     if isinstance(expertise, dict):
         observed_end = (expertise.get("data_window") or {}).get("observed_end")
         if observed_end:
-            return f"h2:{observed_end}"
+            return f"h2:{observed_end}:{comparison_mode}"
     period = result.get("period") or {}
-    comparison = result.get("comparison") or {}
     return "period:{start}:{end}:{compare}".format(
         start=period.get("start"),
         end=period.get("end"),
-        compare=comparison.get("mode"),
+        compare=comparison_mode,
     )
 
 
