@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, TextContent
 
+from .assist_brief import build_assist_brief_facts
 from .diagnostics import (
     record_error,
     record_request,
@@ -103,19 +104,31 @@ def _tool_result(result: dict) -> CallToolResult:
 
 
 def _apply_interaction_contract(result: dict) -> None:
+    brief = build_assist_brief_facts(result)
+    if brief is not None:
+        result["assist_brief_facts"] = brief
+
     contract = {
         "voice_short_response": {
             "order": ["constat", "analyse", "preconisation", "a_venir"],
             "max_sentences": 5,
             "plain_text_no_markdown_headings": True,
             "internal_terms_to_hide": ["H-2", "H−2", "current_h2", "expertise_h2"],
+            "fact_source_rule": (
+                "when_assist_brief_facts_is_present_use_it_as_the_only_fact_source_for_the_short_answer; "
+                "never_use_top_level_two_hour_aggregate_durations"
+            ),
+            "recommendation_rule": (
+                "recommendation_is_optional; never_force_an_action; "
+                "prefer_no_action_needed_when_no_useful_action_is_supported_by_the_facts"
+            ),
             "a_venir_rule": (
                 "only_use_prospective_context_actually_present_in_the_result; "
                 "omit_a_venir_for_historical_requests_when_no_applicable_forecast_is_provided"
             ),
         },
         "detail_follow_up": {
-            "user_phrase": "donne-moi le détail",
+            "user_phrases": ["donne-moi le détail", "donne plus de détails", "détaille"],
             "reuse_same_analysis": True,
             "preferred_behavior": (
                 "expand_from_the_previous_tool_result_without_a_new_analysis; "
@@ -126,15 +139,26 @@ def _apply_interaction_contract(result: dict) -> None:
             "0": "fully_closed",
             "100": "fully_open",
             "intermediate": "percentage_open",
-            "rule": "never_invert_cover_position_semantics",
+            "rule": (
+                "never_invert_cover_position_semantics; "
+                "never_recommend_closing_or_opening_without_relevant_solar_facts"
+            ),
         },
+        "humidity_rule": (
+            "relative_humidity_alone_is_not_a_basis_for_ventilation_or_dehumidification_advice; "
+            "use_temperature_and_absolute_moisture_context_together"
+        ),
+        "causality_rule": (
+            "do_not_say_outdoor_temperature_explains_continuous_cooling_by_itself; "
+            "do_not_turn_correlations_into_proven_causes"
+        ),
         "forecast_horizon_rule": (
             "forecast_h4_is_the_only_prospective_horizon_provided_by_this_H2_result; "
             "never_mention_tomorrow_or_any_time_after_the_last_forecast_h4_point_unless_the_user_explicitly_requests_another_forecast"
         ),
         "automatic_notification_rule": (
-            "a_detailed_deterministic_notification_is_published_automatically_when_a_notification_service_is_configured; "
-            "do_not_repeat_notification_content_in_the_short_voice_answer"
+            "a_detailed_deterministic_report_is_published_automatically_as_a_Home_Assistant_persistent_notification; "
+            "do_not_repeat_the_full_notification_content_in_the_short_voice_answer"
         ),
     }
     result["interaction_contract"] = contract
@@ -150,9 +174,11 @@ def _apply_interaction_contract(result: dict) -> None:
         {
             "shutter_position_rule": "cover_position_0_is_closed_100_is_open",
             "forecast_scope_rule": contract["forecast_horizon_rule"],
+            "humidity_advice_rule": contract["humidity_rule"],
+            "causality_rule": contract["causality_rule"],
             "voice_ergonomics_rule": (
                 "short_voice_answer_is_plain_text_few_sentences_in_order_constat_analyse_preconisation_a_venir; "
-                "detail_is_expanded_only_on_user_request"
+                "when_assist_brief_facts_exists_use_it_only; detail_is_expanded_only_on_user_request"
             ),
         }
     )
@@ -160,7 +186,8 @@ def _apply_interaction_contract(result: dict) -> None:
     if isinstance(response_contract, dict):
         response_contract["assist_voice_rule"] = (
             "plain_text_only; few_sentences; order_constat_analyse_preconisation_a_venir; "
-            "no_markdown_headings; hide_internal_H2_terms; expand_only_when_user_requests_detail"
+            "no_markdown_headings; hide_internal_H2_terms; use_assist_brief_facts_only_when_present; "
+            "expand_only_when_user_requests_detail"
         )
 
 
@@ -199,21 +226,26 @@ def build_mcp_server(
             "Pour 'aujourd'hui entre 13 h et 17 h' ou 'hier entre 8 h et 15 h', utiliser mode=relative_day avec "
             "day=today|yesterday et start_time/end_time ; l'App résout elle-même la date locale. "
             "Pour une date historique absolue, utiliser mode=explicit avec start/end ISO 8601 avec fuseau. "
-            "Après une analyse, si l'utilisateur dit 'donne-moi le détail', privilégier le résultat déjà présent dans "
-            "la conversation ; si un nouvel appel tool est nécessaire, utiliser mode=last_result afin de réutiliser "
-            "exactement la dernière analyse sans recalcul ni nouvelle notification. "
-            "Pour une réponse vocale normale, faire seulement quelques phrases dans cet ordre : constat, analyse prudente, "
-            "préconisation, à venir. Ne pas afficher de titres Markdown, ne pas citer H-2/current_h2 ni les noms internes. "
-            "Le détail est destiné à la notification automatique et au suivi vocal sur demande. "
+            "Après une analyse, si l'utilisateur demande le détail ('donne-moi le détail', 'donne plus de détails', "
+            "'détaille'), privilégier le résultat déjà présent dans la conversation ; si un nouvel appel tool est "
+            "nécessaire, utiliser mode=last_result afin de réutiliser exactement la dernière analyse sans recalcul ni "
+            "nouvelle notification. Pour une réponse vocale normale, faire seulement quelques phrases dans cet ordre : "
+            "constat, analyse prudente, préconisation si réellement utile, à venir. Ne pas afficher de titres Markdown, "
+            "ne pas citer H-2/current_h2 ni les noms internes. Quand assist_brief_facts est présent, l'utiliser comme "
+            "SEULE source factuelle de la réponse courte : ne jamais reprendre les durées ou agrégats top-level des deux "
+            "heures. Le détail complet est envoyé automatiquement dans une notification persistante Home Assistant. "
             "Quand expertise_h2 est présent, last_hour est le sujet principal et previous_hour la référence. "
-            "Les chiffres déterministes sont la source de vérité : ne pas les recalculer. Suivre analysis_contract et "
-            "toutes les interpretation_rule du JSON. Distinguer Fait / Observation / Hypothèse / Incertitude. "
-            "Convention volets : 0 %=fermé, 100 %=ouvert ; ne jamais inverser cette convention. "
-            "La température Daikin terrasse n'est jamais la météo ni une preuve que le compresseur peine. "
-            "Un extérieur plus frais ne signifie jamais automatiquement qu'il faut aérer. "
-            "forecast_h4 est le seul horizon prospectif : ne jamais parler de demain ou d'un instant situé après le "
-            "dernier point forecast_h4 sauf si l'utilisateur demande explicitement une autre prévision. "
-            "Utiliser NORMAL / VIGILANCE / ALERTE seulement si utile à la compréhension, sans alarmisme."
+            "Les chiffres déterministes sont la source de vérité : ne pas les recalculer. Suivre analysis_contract, "
+            "interaction_contract et toutes les interpretation_rule du JSON. Distinguer Fait / Observation / Hypothèse / "
+            "Incertitude. Convention volets : 0 %=fermé, 100 %=ouvert ; ne jamais inverser cette convention et ne pas "
+            "conseiller de fermer/ouvrir sans faits solaires pertinents. L'humidité relative seule ne suffit jamais pour "
+            "conseiller aération ou déshumidification : utiliser aussi température et humidité absolue. La température "
+            "extérieure est un contexte et ne doit pas être présentée seule comme la cause du refroidissement continu. "
+            "La température Daikin terrasse n'est jamais la météo ni une preuve que le compresseur peine. Un extérieur "
+            "plus frais ne signifie jamais automatiquement qu'il faut aérer. forecast_h4 est le seul horizon prospectif : "
+            "ne jamais parler de demain ou d'un instant situé après le dernier point forecast_h4 sauf demande explicite. "
+            "Une préconisation n'est pas obligatoire : si rien d'utile n'est justifié, dire simplement qu'aucune action "
+            "particulière n'est nécessaire. Utiliser NORMAL / VIGILANCE / ALERTE seulement si utile, sans alarmisme."
         ),
     )
     def analyse_thermique(
