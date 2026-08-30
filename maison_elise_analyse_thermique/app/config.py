@@ -13,6 +13,10 @@ class AnalysisConfig:
     shutter_closed_max: float = 5.0
     shutter_open_min: float = 95.0
 
+    # Bande purement descriptive pour mesurer le suivi de consigne.
+    # Ce seuil ne constitue ni une consigne de confort ni une règle de pilotage.
+    setpoint_tracking_band_c: float = 0.5
+
     # Fenêtre géométrique du salon reprise de l'automatisation de production
     # "Gestion volet salon avec soleil et saison" : azimut 54° à 165° et
     # élévation positive. Cette géométrie reste indépendante de la luminosité.
