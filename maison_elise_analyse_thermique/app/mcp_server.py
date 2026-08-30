@@ -473,13 +473,15 @@ def build_mcp_server(
         analysis_id = _analysis_id(mode, result)
         result["analysis_id"] = analysis_id
         publication_required = mode == "current_h2" or full_day_profile
-        result["expert_report_publication"] = {
+        publication = {
             "required": publication_required,
             "status": "pending_expertise" if publication_required else "optional",
             "next_tool": "PublierRapportThermique" if publication_required else None,
-            "profile": "day" if full_day_profile else ("hour" if mode == "current_h2" else None),
             "rule": "publication_occurs_only_after_the_LLM_has_completed_the_single_expertise",
         }
+        if full_day_profile:
+            publication["profile"] = "day"
+        result["expert_report_publication"] = publication
         result["interaction_context"] = {
             "fresh_analysis": True,
             "voice_request_alias": (
