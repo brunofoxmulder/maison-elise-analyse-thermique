@@ -67,10 +67,8 @@ Ce choix suit la migration actuelle de Home Assistant vers les entités Notify e
 - première CI du profil Jour : échec sur un seul champ additionnel dans le contrat Heure ; correction pour conserver strictement dev.12 ;
 - CI #209 PASS après correction Jour ;
 - CI #229 PASS après ajout du mail moderne `mail_entity` + `notify.send_message` ;
-- CI #231 PASS après consolidation de la trace ;
-- CI #233 PASS ;
-- CI #235 PASS sur le HEAD final pré-merge ;
 - tests dédiés : configuration HAOS, appel `notify.send_message`, cible `notify.*`, non-régression notification persistante ;
+- le HEAD final est revalidé par la CI de la PR non-draft utilisée pour le merge ;
 - aucune intervention Home Assistant pendant le développement.
 
 ## Gouvernance
