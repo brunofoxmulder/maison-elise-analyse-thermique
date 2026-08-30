@@ -1,21 +1,24 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from html import escape
 import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from .data_source import InMemoryDataSource
+from .diagnostics import diagnostics_text
 from .google_sheets_source import GoogleSheetsDataSource
 from .mcp_server import build_mcp_server
 from .natural_periods import resolve_natural_period
 from .service import ThermalAnalysisService
 
 
-APP_VERSION = "0.1.0-dev.4"
+APP_VERSION = "0.1.0-dev.5"
 
 
 def _build_source():
@@ -71,6 +74,60 @@ def health():
         "read_only": True,
         "data_source": type(source).__name__,
     }
+
+
+@app.get("/diagnostic", response_class=HTMLResponse)
+def diagnostic():
+    text = diagnostics_text()
+    safe_text = escape(text)
+    data_source = escape(type(source).__name__)
+    return HTMLResponse(
+        f"""<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Maison Élise — Diagnostic MCP</title>
+<style>
+body {{ font-family: sans-serif; margin: 20px; background: #111; color: #eee; }}
+button {{ font-size: 1rem; padding: 12px 16px; margin: 8px 0 16px; }}
+pre {{ white-space: pre-wrap; overflow-wrap: anywhere; background: #000; padding: 12px; border-radius: 8px; }}
+#copy-status {{ margin-left: 8px; }}
+</style>
+</head>
+<body>
+<h2>Maison Élise — Analyse thermique</h2>
+<p>Version {APP_VERSION} · lecture seule · {data_source}</p>
+<button type="button" onclick="copyDiagnostic()">Copier le diagnostic</button>
+<span id="copy-status" aria-live="polite"></span>
+<pre id="diag">{safe_text}</pre>
+<script>
+async function copyDiagnostic() {{
+  const text = document.getElementById('diag').innerText;
+  const status = document.getElementById('copy-status');
+  try {{
+    if (navigator.clipboard && navigator.clipboard.writeText) {{
+      await navigator.clipboard.writeText(text);
+    }} else {{
+      const area = document.createElement('textarea');
+      area.value = text;
+      area.style.position = 'fixed';
+      area.style.opacity = '0';
+      document.body.appendChild(area);
+      area.focus();
+      area.select();
+      if (!document.execCommand('copy')) throw new Error('copy failed');
+      document.body.removeChild(area);
+    }}
+    status.textContent = 'Copié';
+  }} catch (err) {{
+    status.textContent = 'Copie impossible : sélectionne le texte ci-dessous.';
+  }}
+}}
+</script>
+</body>
+</html>"""
+    )
 
 
 @app.post("/analyse")
