@@ -12,7 +12,7 @@ La dernière heure est toujours le sujet principal. L’heure précédente est u
 
 L’App reste déterministe, en lecture seule et non prescriptive. Elle récupère, nettoie, calcule, compare et structure les faits. Elle ne décide pas qu’il faut ouvrir, fermer, chauffer ou refroidir.
 
-L’IA reçoit les faits structurés et, avec son prompt métier, produit l’explication et le conseil. Elle ne recalcule pas les chiffres et ne transforme pas une corrélation en causalité certaine.
+L’IA reçoit les faits structurés et, avec son prompt métier versionné `h2-expert-v1`, produit l’explication et le conseil. Elle ne recalcule pas les chiffres et ne transforme pas une corrélation en causalité certaine.
 
 ## Données et indicateurs remis à l’IA pour chaque heure
 
@@ -35,9 +35,9 @@ L’IA reçoit les faits structurés et, avec son prompt métier, produit l’ex
 6. Les valeurs `Cool_energy_derniere_heure` et `Heat_energy_derniere_heure` sont des observations horaires ; elles ne doivent pas être additionnées à chaque relevé de cinq minutes.
 7. L’App ne commande aucun équipement. Le conseil appartient à l’IA et doit rester prudent.
 
-## Structure JSON ajoutée
+## Structure JSON `expertise_h2`
 
-Pour une période demandée d’environ deux heures, le service ajoute `expertise_h2` :
+Pour une période demandée d’environ deux heures, le service ajoute :
 
 - `profile = h2_last_hour_vs_previous_hour`
 - `primary_period` = dernière heure
@@ -45,12 +45,65 @@ Pour une période demandée d’environ deux heures, le service ajoute `expertis
 - `last_hour`
 - `previous_hour`
 - `comparison`
+- `forecast_h4`
 - `analysis_contract`
 
 Chaque bloc horaire contient l’analyse existante et les enrichissements H−2. La comparaison fournit les deltas déterministes utiles sans produire de conclusion causale.
 
-## Hors périmètre de cette première dev.8
+`analysis_contract` identifie également `prompt_version = h2-expert-v1` et le format de réponse attendu : NORMAL/VIGILANCE/ALERTE, situation, évolution, explications prudentes, conseil 2–4 h, vigilance, conclusion, avec conseils Volets / Aération / Daikin.
 
-La météo prévisionnelle H+4 n’est pas encore ajoutée à l’App. Elle constitue l’étape suivante du profil horaire, après validation de ce contrat sur les données déterministes existantes.
+## Météo H+4 — décision d’architecture
 
-Les profils hebdomadaire et mensuel restent distincts et seront construits après validation du H−2.
+La prévision horaire H+4 provient de l’entité Home Assistant `weather.dammarie_les_lys` via l’action native `weather.get_forecasts` appelée par l’API Core interne de Home Assistant.
+
+Décision : ne pas créer de fournisseur météo parallèle ni recopier la logique météo dans l’App.
+
+L’App HAOS déclare `homeassistant_api: true` et utilise le `SUPERVISOR_TOKEN` fourni par Home Assistant. Le code de dev.8 n’appelle qu’une action de lecture : `weather.get_forecasts`, ainsi que la lecture de l’état de l’entité météo pour ses unités.
+
+**Point de sécurité à conserver dans la traçabilité :** l’autorisation `homeassistant_api` élargit techniquement la surface d’accès de l’App au Core Home Assistant, même si l’implémentation actuelle n’utilise que la météo en lecture. Cette permission doit être revue à chaque évolution et ne justifie aucun ajout d’action domotique.
+
+La météo H+4 est facultative et non bloquante :
+
+- si Home Assistant ou l’entité météo ne répond pas, l’analyse H−2 reste disponible ;
+- l’indisponibilité est exposée dans `forecast_h4.available=false` ;
+- aucune valeur manquante n’est inventée ;
+- une demande H−2 historique ne reçoit pas la météo actuelle comme si elle représentait le passé ;
+- le vent extérieur est seulement un contexte de potentiel d’aération, jamais une preuve de courant d’air dans le logement.
+
+## Prompt expert
+
+Le prompt de référence est versionné dans `docs/h2-expert-prompt-v1.md`.
+
+Il conserve les principes historiques du Pyscript horaire et du référentiel métier clim, mais ajoute explicitement les règles validées le 30/08/2026 : consigne active, humidité absolue/point de rosée, distinction renouvellement d’air / stratégie thermique, aération pouvant aider le Daikin sans être automatiquement optimale, raisonnement été/hiver et microclimat terrasse non causal.
+
+## Critère de recette dev.8 H−2
+
+Le JSON doit permettre à l’IA de répondre sans invention à :
+
+1. que s’est-il passé pendant la dernière heure ?
+2. est-ce mieux, moins bien ou stable par rapport à l’heure précédente ?
+3. la température évolue-t-elle de façon cohérente avec la consigne active ?
+4. que montrent ensemble température, hygrométrie, HVAC, fréquence et énergie ?
+5. les ouvrants, le soleil et les volets apportent-ils un contexte pertinent ?
+6. la météo H+4 change-t-elle le conseil pour les prochaines heures ?
+7. quelles conclusions sont des faits, observations, hypothèses ou incertitudes ?
+
+Le LLM n’a pas à refaire les calculs.
+
+## Hors périmètre de dev.8
+
+- envoi de notification ou mail ;
+- commandes d’équipement ;
+- profils hebdomadaire et mensuel ;
+- apprentissage automatique de l’efficacité de l’aération ;
+- modification d’Investigator, Élise Why, Maison Élise ou HA-MCP Server.
+
+## Traçabilité
+
+Baseline : dev.7 terrain PASS, main `bb6d80b4cdf77b699cf89fa20c825f4088c031ec`.
+
+Branche : `dev8-h2-expertise-contract` — PR #7 draft.
+
+Origines fonctionnelles : Pyscript `Analyse_horaire_v5.py` V5.0.5 A+, référentiel `/config/prompts/referentiel_metier_clim.txt`, échanges et décisions du 30/08/2026.
+
+Toute modification future du contrat H−2 ou du prompt doit être versionnée et accompagnée du motif de changement, afin de pouvoir revenir au dernier cap validé si une évolution se révèle mauvaise.
