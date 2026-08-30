@@ -28,6 +28,6 @@ jobs:
           from app.api import health
           result = health()
           assert result['status'] == 'ok'
-          assert result['version'] == '0.1.0-dev.6'
+          assert result['version'] == '0.1.0-dev.7'
           assert result['read_only'] is True
           PY
