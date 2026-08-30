@@ -47,20 +47,28 @@ class FakeSource:
 
 def _two_hours():
     start = datetime(2026, 8, 30, 10, 0, tzinfo=TZ)
+    midpoint = start + timedelta(hours=1)
     samples = []
-    for index in range(24):
+    # V5 semantics: 25 points over two hours, including both ends. The midpoint
+    # is shared by the two one-hour blocks, so a complete hour contains 13
+    # points and 12 five-minute intervals.
+    for index in range(25):
         ts = start + timedelta(minutes=5 * index)
-        last_hour = ts >= start + timedelta(hours=1)
+        after_midpoint = ts > midpoint
         after_setpoint_change = ts >= start + timedelta(hours=1, minutes=30)
+        if after_midpoint:
+            indoor = 19.64 + 0.07 * (index - 12)
+        else:
+            indoor = 19.4 + 0.02 * index
         samples.append(
             _sample(
                 ts,
-                indoor=(19.4 + 0.02 * index) if not last_hour else (19.65 + 0.07 * (index - 12)),
-                humidity_in=60.0 if not last_hour else 58.0,
+                indoor=indoor,
+                humidity_in=58.0 if after_midpoint else 60.0,
                 outdoor=10.0,
                 humidity_out=80.0,
                 setpoint=21.0 if after_setpoint_change else 19.0,
-                cool_kwh=0.20 if not last_hour else 0.15,
+                cool_kwh=0.15 if after_midpoint else 0.20,
                 daikin=17.0,
             )
         )
@@ -87,14 +95,29 @@ def test_h2_contract_uses_last_hour_as_primary_and_previous_as_reference() -> No
 
     h2 = result["expertise_h2"]
     assert h2["profile"] == "h2_last_hour_vs_previous_hour"
-    assert h2["primary_period"]["start"] == "2026-08-30T11:00:00+02:00"
-    assert h2["reference_period"]["start"] == "2026-08-30T10:00:00+02:00"
+    assert h2["primary_period"] == {
+        "start": "2026-08-30T11:00:00+02:00",
+        "end": "2026-08-30T12:00:00+02:00",
+    }
+    assert h2["reference_period"] == {
+        "start": "2026-08-30T10:00:00+02:00",
+        "end": "2026-08-30T11:00:00+02:00",
+    }
+    assert h2["data_window"]["observed_end"] == "2026-08-30T12:00:00+02:00"
+    assert h2["data_window"]["requested_end_to_observed_end_lag_minutes"] == 0.0
+    assert h2["data_window"]["end_alignment_good"] is True
+    assert h2["data_window"]["shared_midpoint_present"] is True
+    assert h2["data_window"]["previous_hour_samples"] == 13
+    assert h2["data_window"]["last_hour_samples"] == 13
+
     contract = h2["analysis_contract"]
     assert contract["primary_rule"] == (
         "analyse_the_last_hour_and_compare_it_with_the_previous_hour"
     )
     assert contract["prompt_version"] == "h2-expert-v1"
     assert "top_level_analysis_is_the_legacy_two_hour_aggregate" in contract["h2_result_rule"]
+    assert "latest_actual_sample" in contract["data_anchor_rule"]
+    assert "13_point_60_minute_semantics" in contract["hour_boundary_rule"]
     assert "weaken_the_conclusion_explicitly" in contract["quality_rule"]
     assert "distinguish_fact_observation_hypothesis_and_uncertainty" in contract["evidence_rule"]
     assert "possible_inertia" in contract["setpoint_transition_rule"]
@@ -106,6 +129,15 @@ def test_h2_contract_uses_last_hour_as_primary_and_previous_as_reference() -> No
 
     last = h2["last_hour"]
     previous = h2["previous_hour"]
+    assert previous["analysis"]["samples"] == 13
+    assert last["analysis"]["samples"] == 13
+    assert previous["analysis"]["period_coverage"]["covered_minutes"] == 60.0
+    assert last["analysis"]["period_coverage"]["covered_minutes"] == 60.0
+    assert previous["analysis"]["hvac_action_minutes"]["cooling"] == 60.0
+    assert last["analysis"]["hvac_action_minutes"]["cooling"] == 60.0
+    assert previous["temperature_trend"]["rate_c_per_hour"] == previous["temperature_trend"]["delta_c"]
+    assert last["temperature_trend"]["rate_c_per_hour"] == last["temperature_trend"]["delta_c"]
+
     assert previous["setpoint_tracking"]["latest_setpoint_c"] == 19.0
     assert last["setpoint_tracking"]["latest_setpoint_c"] == 21.0
     assert last["setpoint_tracking"]["transition_count"] == 1
@@ -117,6 +149,26 @@ def test_h2_contract_uses_last_hour_as_primary_and_previous_as_reference() -> No
     assert h2["comparison"]["temperature_evolution_classification"]["source_rule"] == (
         "pyscript_horaire_v5_qualifier_tendance"
     )
+
+
+def test_h2_anchors_to_latest_actual_sample_and_exposes_end_lag() -> None:
+    _, _, samples = _two_hours()
+    requested_end = datetime(2026, 8, 30, 12, 20, tzinfo=TZ)
+    requested_start = requested_end - timedelta(hours=2)
+
+    h2 = ThermalAnalysisService(FakeSource(samples)).analyse(
+        requested_start,
+        requested_end,
+    )["expertise_h2"]
+
+    assert h2["primary_period"] == {
+        "start": "2026-08-30T11:00:00+02:00",
+        "end": "2026-08-30T12:00:00+02:00",
+    }
+    assert h2["data_window"]["requested_period"]["end"] == "2026-08-30T12:20:00+02:00"
+    assert h2["data_window"]["requested_end_to_observed_end_lag_minutes"] == 20.0
+    assert h2["data_window"]["end_alignment_good"] is False
+    assert "exceeds_15_minutes" in h2["analysis_contract"]["data_anchor_rule"]
 
 
 def test_h2_air_properties_do_not_treat_relative_humidity_alone_as_ventilation_rule() -> None:
