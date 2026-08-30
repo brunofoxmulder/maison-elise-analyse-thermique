@@ -127,8 +127,13 @@ def test_list_tools_exposes_only_analyse_thermique() -> None:
             assert tool.name == "AnalyseThermique"
             assert set(tool.inputSchema["properties"]) == {"start", "end", "compare"}
             assert set(tool.inputSchema["required"]) == {"start", "end"}
-            assert "dernière heure" in tool.description
-            assert "météo H+4" in tool.description
+            assert "last_hour est le sujet principal" in tool.description
+            assert "analysis_contract" in tool.description
+            assert "Fait / Observation / Hypothèse / Incertitude" in tool.description
+            assert "température Daikin terrasse" in tool.description
+            assert "plus frais" in tool.description
+            assert "forecast_h4" in tool.description
+            assert "NORMAL / VIGILANCE / ALERTE" in tool.description
 
     asyncio.run(scenario())
 
