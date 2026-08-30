@@ -20,6 +20,7 @@ from .service import ThermalAnalysisService
 AnalysisMode = Literal["current_h2", "explicit"]
 CompareMode = Literal[
     "previous_period",
+    "previous_hour",
     "previous_day",
     "j-1",
     "previous_week",
@@ -60,6 +61,7 @@ def build_mcp_server(
             "dans son fuseau configuré et construit les deux dernières heures. En mode=current_h2, start, end et compare "
             "sont ignorés même s'ils sont fournis. Pour une période historique ou calendaire explicite, utiliser "
             "mode=explicit avec start et end ISO 8601 avec fuseau ; compare est optionnel et limité aux valeurs du schéma. "
+            "previous_hour est accepté comme alias naturel de previous_period uniquement pour une période explicite d'une heure. "
             "Quand expertise_h2 est présent, baser la réponse sur expertise_h2 : last_hour est le sujet principal, "
             "previous_hour la référence ; le top-level analysis est seulement l'agrégat historique des deux heures. "
             "Les chiffres déterministes sont la source de vérité : ne pas les recalculer. Suivre analysis_contract et "
@@ -94,7 +96,15 @@ def build_mcp_server(
                 raise ValueError("start and end are required when mode=explicit")
             resolved_start = start
             resolved_end = end
-            resolved_compare = compare
+            if compare == "previous_hour":
+                duration_minutes = (end - start).total_seconds() / 60.0
+                if not 55.0 <= duration_minutes <= 65.0:
+                    raise ValueError(
+                        "previous_hour is only valid for an explicit period of about one hour"
+                    )
+                resolved_compare = "previous_period"
+            else:
+                resolved_compare = compare
 
         record_resolution(
             mode,
