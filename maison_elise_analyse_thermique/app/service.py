@@ -74,6 +74,22 @@ class ThermalAnalysisService:
         expertise["analysis_contract"].update(
             {
                 "prompt_version": "h2-expert-v1",
+                "h2_result_rule": (
+                    "when_expertise_h2_is_present_use_it_as_the_primary_H2_material; "
+                    "top_level_analysis_is_the_legacy_two_hour_aggregate_and_is_not_the_primary_H2_summary"
+                ),
+                "evidence_rule": (
+                    "distinguish_fact_observation_hypothesis_and_uncertainty; "
+                    "correlation_or_simultaneity_is_not_proven_causality"
+                ),
+                "compressor_rule": (
+                    "assess_daikin_with_hvac_action_frequency_energy_indoor_temperature_active_setpoint_"
+                    "reliable_outdoor_temperature_openings_and_solar_context_together"
+                ),
+                "dehumidification_rule": (
+                    "if_indoor_temperature_is_near_setpoint_while_cooling_continues_and_humidity_is_high_"
+                    "dehumidification_or_modulation_may_be_compatible_explanations_but_are_not_proven_causes"
+                ),
                 "forecast_rule": (
                     "h4_forecast_is_prospective_context_not_a_certainty; "
                     "missing_forecast_must_be_reported_as_uncertainty_and_never_invented"
@@ -92,6 +108,10 @@ class ThermalAnalysisService:
                         "Conclusion",
                     ],
                     "advice_labels": ["Volets", "Aération", "Daikin"],
+                    "assist_voice_rule": (
+                        "for_a_normal_voice_answer_keep_only_three_or_four_useful_conclusions; "
+                        "expand_only_when_the_user_requests_detail"
+                    ),
                 },
             }
         )
