@@ -3,7 +3,8 @@ from app.compressor_regime import classify_compressor_frequency, compressor_regi
 
 def test_compressor_regime_thresholds():
     assert classify_compressor_frequency(None) is None
-    assert classify_compressor_frequency(0) == "très faible"
+    assert classify_compressor_frequency(0) == "arrêté"
+    assert classify_compressor_frequency(0.1) == "très faible"
     assert classify_compressor_frequency(15) == "très faible"
     assert classify_compressor_frequency(15.1) == "faible"
     assert classify_compressor_frequency(22) == "faible"
@@ -17,7 +18,8 @@ def test_compressor_regime_context_is_descriptive_only():
     assert context["mean_regime_family"] == "faible"
     assert context["max_regime_family"] == "faible"
     assert context["thresholds_hz"] == {
-        "très faible": "<=15",
+        "arrêté": "0",
+        "très faible": ">0-15",
         "faible": "16-22",
         "moyen": "23-35",
         "fort": ">35",

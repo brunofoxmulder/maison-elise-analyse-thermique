@@ -66,8 +66,10 @@ def test_day_profile_highlights_two_recorded_requested_temperatures(
         second_setpoint,
     }
     assert all(regime["segments"] for regime in mode_profile["regimes"])
-    assert all(regime["mean_abs_tracking_error_c"] is not None for regime in mode_profile["regimes"])
+    assert all(regime["mean_abs_delta_to_setpoint_c"] is not None for regime in mode_profile["regimes"])
+    assert all("mean_abs_tracking_error_c" not in regime for regime in mode_profile["regimes"])
     assert profile["tracking_band_semantics"] == "descriptive_tracking_only_not_a_comfort_threshold"
+    assert profile["tracking_wording_rule"] == "use_ecart_a_la_consigne_not_erreur"
     assert "recorded_Consigne" in profile["setpoint_source_rule"]
 
 

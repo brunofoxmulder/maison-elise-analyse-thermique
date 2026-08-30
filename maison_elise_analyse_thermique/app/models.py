@@ -26,3 +26,6 @@ class ThermalSample:
     # Sonde du groupe extérieur Daikin : contexte de microclimat terrasse
     # uniquement. Elle ne remplace jamais la température extérieure fiable.
     temp_outdoor_daikin: Optional[float] = None
+    # Historique du signal de vie : True = réveillé, False = dort.
+    # Ce champ doit provenir de la ligne historique analysée, jamais de l'état HA actuel.
+    awake: Optional[bool] = None

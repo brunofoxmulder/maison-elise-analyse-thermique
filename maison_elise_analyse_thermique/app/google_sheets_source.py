@@ -30,6 +30,13 @@ def _bool(value):
     return None
 
 
+def _first_present(row, *names):
+    for name in names:
+        if name in row and row.get(name) not in (None, ""):
+            return row.get(name)
+    return None
+
+
 def _timestamp(value, tz: ZoneInfo):
     if not value:
         return None
@@ -72,6 +79,12 @@ def _row_to_sample(row, tz: ZoneInfo) -> ThermalSample | None:
         window_open=_bool(row.get("Fenêtre_salon")),
         door_window_open=_bool(row.get("Porte_fenêtre")),
         temp_outdoor_daikin=_float(row.get("Température_extérieure_Daikin")),
+        awake=_bool(_first_present(
+            row,
+            "Prise_de_comptage",
+            "Prise de comptage",
+            "prise_de_comptage",
+        )),
     )
 
 
