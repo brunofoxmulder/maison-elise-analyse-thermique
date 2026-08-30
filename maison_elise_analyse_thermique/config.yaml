@@ -1,7 +1,7 @@
 name: Maison Élise — Analyse thermique
 slug: maison_elise_analyse_thermique
 description: Analyse thermique déterministe en lecture seule, en parallèle de l'existant.
-version: 0.1.0-dev.4
+version: 0.1.0-dev.5
 url: https://github.com/brunofoxmulder/maison-elise-analyse-thermique
 startup: application
 boot: manual
@@ -14,7 +14,7 @@ ports:
   8099/tcp: 8099
 ports_description:
   8099/tcp: API HTTP de validation
-webui: http://[HOST]:[PORT:8099]/health
+webui: http://[HOST]:[PORT:8099]/diagnostic
 options:
   service_account_file: /homeassistant/Google/service_account.json
   spreadsheet_id: ""
