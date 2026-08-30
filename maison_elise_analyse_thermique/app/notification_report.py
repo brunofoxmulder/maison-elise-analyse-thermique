@@ -1,20 +1,6 @@
 from __future__ import annotations
 
 
-_TREND_LABELS = {
-    "indeterminate": "évolution indéterminée",
-    "stable_both_hours": "stable sur les deux heures",
-    "stabilizing_last_hour": "stabilisation sur la dernière heure",
-    "trend_reversal": "inversion de tendance",
-    "warming_accelerating": "réchauffement qui accélère",
-    "warming_slowing": "réchauffement qui ralentit",
-    "warming_regular": "réchauffement régulier",
-    "cooling_accelerating": "refroidissement qui accélère",
-    "cooling_slowing": "refroidissement qui ralentit",
-    "cooling_regular": "refroidissement régulier",
-}
-
-
 def _get(obj, *path):
     current = obj
     for key in path:
@@ -60,6 +46,7 @@ def build_notification_report(result: dict) -> str:
         air = last.get("air_properties") or {}
         energy = last.get("hourly_energy_observation") or {}
         comparison = expertise.get("comparison") or {}
+        trend_classification = comparison.get("temperature_evolution_classification") or {}
         forecast = expertise.get("forecast_h4") or {}
         quality = expertise.get("data_window") or {}
         period = expertise.get("primary_period") or {}
@@ -82,7 +69,7 @@ def build_notification_report(result: dict) -> str:
             ),
             (
                 f"Comparaison heure précédente : "
-                f"{_TREND_LABELS.get(_get(comparison, 'temperature_evolution_classification', 'classification'), _get(comparison, 'temperature_evolution_classification', 'classification') or 'n/d')}; "
+                f"{trend_classification.get('label_fr', 'n/d')}; "
                 f"écart de moyenne {_num(comparison.get('indoor_temperature_mean_delta_c'), 2)} °C."
             ),
             (
