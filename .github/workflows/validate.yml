@@ -20,7 +20,7 @@ jobs:
         run: python -m compileall -q app tests
       - name: Run tests
         working-directory: maison_elise_analyse_thermique
-        run: pytest -q
+        run: python -m pytest -q
       - name: Import API and check health contract
         working-directory: maison_elise_analyse_thermique
         run: |
