@@ -16,7 +16,7 @@ ports_description:
   8099/tcp: API HTTP de validation
 webui: http://[HOST]:[PORT:8099]/health
 options:
-  service_account_file: /homeassistant/Google/home-assistant-sheets-500717-27eb772ebae7.json
+  service_account_file: /homeassistant/Google/service_account.json
   spreadsheet_id: ""
   worksheet_name: Confort thermique
   timezone: Europe/Paris
