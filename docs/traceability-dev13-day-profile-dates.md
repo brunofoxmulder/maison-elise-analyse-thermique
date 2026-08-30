@@ -49,12 +49,34 @@ Pour une journée historique terminée, le LLM ne doit pas inventer de préconis
 
 Les garde-fous dev.12 restent valables : convention volets 0 %=fermé / 100 %=ouvert, RH seule insuffisante pour l'aération, température Daikin terrasse = microclimat seulement, corrélation ≠ causalité.
 
+## Sortie mail via Home Assistant
+
+Le mail est une sortie facultative supplémentaire **après l'expertise**, utilisant exactement le même rapport que la notification HA.
+
+- l'App n'embarque aucun serveur SMTP, identifiant, mot de passe ou destinataire ;
+- la configuration HAOS expose `mail_entity`, vide par défaut ;
+- la valeur attendue est une entité Home Assistant `notify.*` créée par l'intégration SMTP ;
+- l'App appelle l'action moderne `notify.send_message` en ciblant cette entité ;
+- aucune dépendance au service legacy `notify.nom_du_service` n'est ajoutée ;
+- une erreur d'envoi mail est non bloquante : le rapport et la notification persistante HA restent valides.
+
+Ce choix suit la migration actuelle de Home Assistant vers les entités Notify et anticipe le changement SMTP signalé dans l'interface HA.
+
+## Validation
+
+- première CI du profil Jour : échec sur un seul champ additionnel dans le contrat Heure ; correction pour conserver strictement dev.12 ;
+- CI #209 PASS après correction Jour ;
+- CI #229 PASS après ajout du mail moderne `mail_entity` + `notify.send_message` ;
+- tests dédiés : configuration HAOS, appel `notify.send_message`, cible `notify.*`, non-régression notification persistante ;
+- aucune intervention Home Assistant pendant le développement.
+
 ## Gouvernance
 
 - branche `dev13-day-profile-dates` depuis `main` dev.12 ;
 - version `0.1.0-dev.13` ;
 - même moteur thermique générique ; ajout d'un enrichissement déterministe de consignes ;
 - même notification `persistent_notification.create` après expertise ;
+- mail optionnel via entité Notify HA moderne ;
 - aucune commande d'équipement ;
 - aucun changement Investigator / Élise Why / Maison Élise / HA-MCP Server ;
 - aucun changement Home Assistant pendant le développement.
