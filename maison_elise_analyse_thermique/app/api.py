@@ -1,200 +1,150 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
-from html import escape
 import os
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI
 from pydantic import BaseModel
 
-from .data_source import InMemoryDataSource
-from .diagnostics import diagnostics_text
+from .config import AnalysisConfig
 from .google_sheets_source import GoogleSheetsDataSource
 from .mcp_server import build_mcp_server
-from .natural_periods import resolve_natural_period
-from .notification_publisher import (
-    HomeAssistantNotificationPublisher,
-    UnavailableNotificationPublisher,
-)
+from .natural_language import parse_natural_request
+from .notification_publisher import HomeAssistantNotificationPublisher
 from .service import ThermalAnalysisService
-from .weather_forecast import (
-    HomeAssistantWeatherForecastProvider,
-    UnavailableWeatherForecastProvider,
-)
+from .weather_forecast import HomeAssistantWeatherForecastProvider
 
 
 APP_VERSION = "0.1.0-dev.16"
 APP_TIMEZONE = os.getenv("THERMAL_TIMEZONE", "Europe/Paris")
 
 
-def _build_source():
-    service_account_file = os.getenv("THERMAL_GOOGLE_SERVICE_ACCOUNT_FILE")
-    spreadsheet_id = os.getenv("THERMAL_SPREADSHEET_ID")
-    worksheet_name = os.getenv("THERMAL_WORKSHEET_NAME", "Confort thermique")
-
-    if service_account_file and spreadsheet_id:
-        return GoogleSheetsDataSource(
-            service_account_file=service_account_file,
-            spreadsheet_id=spreadsheet_id,
-            worksheet_name=worksheet_name,
-            timezone=APP_TIMEZONE,
-        )
-    return InMemoryDataSource([])
+class AnalyseBody(BaseModel):
+    start: str
+    end: str
+    compare: str | None = None
 
 
-def _build_forecast_provider():
-    token = os.getenv("SUPERVISOR_TOKEN")
-    weather_entity = os.getenv("THERMAL_WEATHER_ENTITY", "weather.dammarie_les_lys")
-    if not token:
-        return UnavailableWeatherForecastProvider("supervisor_token_unavailable")
-    try:
-        return HomeAssistantWeatherForecastProvider(
-            token=token,
-            entity_id=weather_entity,
-        )
-    except ValueError:
-        return UnavailableWeatherForecastProvider("invalid_weather_configuration")
+class NaturalAnalyseBody(BaseModel):
+    request: str
+
+
+def _required_env(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise RuntimeError(f"Missing required environment variable: {name}")
+    return value
+
+
+def _build_service() -> ThermalAnalysisService:
+    service_account_file = _required_env("SERVICE_ACCOUNT_FILE")
+    spreadsheet_id = _required_env("SPREADSHEET_ID")
+    worksheet_name = os.getenv("WORKSHEET_NAME", "Confort thermique")
+    weather_entity = os.getenv("WEATHER_ENTITY", "").strip()
+
+    source = GoogleSheetsDataSource(
+        service_account_file=Path(service_account_file),
+        spreadsheet_id=spreadsheet_id,
+        worksheet_name=worksheet_name,
+        timezone=APP_TIMEZONE,
+    )
+    forecast_provider = HomeAssistantWeatherForecastProvider(
+        weather_entity=weather_entity,
+        timezone=APP_TIMEZONE,
+    )
+    return ThermalAnalysisService(
+        source,
+        AnalysisConfig(),
+        forecast_provider=forecast_provider,
+    )
 
 
 def _build_notification_publisher():
-    token = os.getenv("SUPERVISOR_TOKEN")
-    mail_entity = os.getenv("THERMAL_MAIL_ENTITY", "")
-    if not token:
-        return UnavailableNotificationPublisher("supervisor_token_unavailable")
-    try:
-        return HomeAssistantNotificationPublisher(
-            token=token,
-            mail_entity=mail_entity,
-        )
-    except ValueError:
-        return UnavailableNotificationPublisher("invalid_notification_configuration")
+    notification_service = os.getenv("NOTIFICATION_SERVICE", "").strip()
+    mail_entity = os.getenv("MAIL_ENTITY", "").strip()
+    return HomeAssistantNotificationPublisher(
+        notification_service=notification_service,
+        mail_entity=mail_entity,
+    )
 
 
-source = _build_source()
-forecast_provider = _build_forecast_provider()
+service = _build_service()
 notification_publisher = _build_notification_publisher()
-service = ThermalAnalysisService(source, forecast_provider=forecast_provider)
 mcp_server = build_mcp_server(
     service,
     timezone=APP_TIMEZONE,
     notification_publisher=notification_publisher,
 )
 
-
-@asynccontextmanager
-async def lifespan(_app: FastAPI):
-    async with mcp_server.session_manager.run():
-        yield
-
-
-app = FastAPI(
-    title="Maison Élise — Analyse thermique",
-    version=APP_VERSION,
-    lifespan=lifespan,
-)
-
-
-class AnalyseBody(BaseModel):
-    start: datetime
-    end: datetime
-    compare: str | None = None
-
-
-class NaturalAnalyseBody(BaseModel):
-    period: str
-    compare: str | None = None
+app = FastAPI(title="Maison Élise — Analyse thermique", version=APP_VERSION)
 
 
 @app.get("/health")
 def health():
     return {
         "status": "ok",
+        "app": "Maison Élise — Analyse thermique",
         "version": APP_VERSION,
-        "read_only": True,
-        "data_source": type(source).__name__,
+        "timezone": APP_TIMEZONE,
+        "mcp_endpoint": "/mcp",
     }
 
 
-@app.get("/diagnostic", response_class=HTMLResponse)
+@app.get("/diagnostic")
 def diagnostic():
-    text = diagnostics_text()
-    safe_text = escape(text)
-    data_source = escape(type(source).__name__)
-    return HTMLResponse(
-        f"""<!doctype html>
-<html lang="fr">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Maison Élise — Diagnostic MCP</title>
-<style>
-body {{ font-family: sans-serif; margin: 20px; background: #111; color: #eee; }}
-button {{ font-size: 1rem; padding: 12px 16px; margin: 8px 0 16px; }}
-pre {{ white-space: pre-wrap; overflow-wrap: anywhere; background: #000; padding: 12px; border-radius: 8px; }}
-#copy-status {{ margin-left: 8px; }}
-</style>
-</head>
-<body>
-<h2>Maison Élise — Analyse thermique</h2>
-<p>Version {APP_VERSION} · données thermiques en lecture seule · {data_source}</p>
-<button type="button" onclick="copyDiagnostic()">Copier le diagnostic</button>
-<span id="copy-status" aria-live="polite"></span>
-<pre id="diag">{safe_text}</pre>
-<script>
-async function copyDiagnostic() {{
-  const text = document.getElementById('diag').innerText;
-  const status = document.getElementById('copy-status');
-  try {{
-    if (navigator.clipboard && navigator.clipboard.writeText) {{
-      await navigator.clipboard.writeText(text);
-    }} else {{
-      const area = document.createElement('textarea');
-      area.value = text;
-      area.style.position = 'fixed';
-      area.style.opacity = '0';
-      document.body.appendChild(area);
-      area.focus();
-      area.select();
-      if (!document.execCommand('copy')) throw new Error('copy failed');
-      document.body.removeChild(area);
-    }}
-    status.textContent = 'Copié';
-  }} catch (err) {{
-    status.textContent = 'Copie impossible : sélectionne le texte ci-dessous.';
-  }}
-}}
-</script>
-</body>
-</html>"""
-    )
+    return {
+        "status": "ok",
+        "app": "Maison Élise — Analyse thermique",
+        "version": APP_VERSION,
+        "timezone": APP_TIMEZONE,
+        "mcp": {
+            "transport": "streamable-http",
+            "endpoint": "/mcp",
+            "stateless_http": True,
+            "json_response": True,
+        },
+        "source": {
+            "spreadsheet_id_configured": bool(os.getenv("SPREADSHEET_ID", "").strip()),
+            "worksheet_name": os.getenv("WORKSHEET_NAME", "Confort thermique"),
+            "service_account_file": os.getenv("SERVICE_ACCOUNT_FILE", ""),
+        },
+        "weather": {
+            "entity": os.getenv("WEATHER_ENTITY", "").strip(),
+        },
+        "publication": {
+            "notification_service": os.getenv("NOTIFICATION_SERVICE", "").strip(),
+            "mail_entity": os.getenv("MAIL_ENTITY", "").strip(),
+        },
+    }
+
+
+def _parse_datetime(value: str) -> datetime:
+    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if dt.tzinfo is None or dt.utcoffset() is None:
+        dt = dt.replace(tzinfo=ZoneInfo(APP_TIMEZONE))
+    return dt
 
 
 @app.post("/analyse")
 def analyse(body: AnalyseBody):
-    try:
-        return service.analyse(body.start, body.end, body.compare)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    start = _parse_datetime(body.start)
+    end = _parse_datetime(body.end)
+    return service.analyse(start, end, compare=body.compare)
 
 
 @app.post("/analyse/natural")
 def analyse_natural(body: NaturalAnalyseBody):
-    try:
-        now = datetime.now(ZoneInfo(APP_TIMEZONE))
-        start, end = resolve_natural_period(body.period, now, APP_TIMEZONE)
-        result = service.analyse(start, end, body.compare)
-        result["period_request"] = {
-            "text": body.period,
-            "resolved_start": start.isoformat(),
-            "resolved_end": end.isoformat(),
-            "resolver": "deterministic_fr_v1",
-        }
-        return result
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    parsed = parse_natural_request(body.request, timezone=APP_TIMEZONE)
+    result = service.analyse(parsed.start, parsed.end, compare=parsed.compare)
+    result["resolved_request"] = {
+        "start": parsed.start.isoformat(),
+        "end": parsed.end.isoformat(),
+        "compare": parsed.compare,
+        "source": "natural_language_parser",
+    }
+    return result
 
 
 # Keep the legacy HTTP routes above this catch-all mount so their paths remain
