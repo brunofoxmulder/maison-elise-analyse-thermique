@@ -66,7 +66,7 @@ def build_setpoint_profiles(samples) -> dict:
                 "indoor_sum": 0.0,
                 "indoor_weight": 0.0,
                 "signed_delta_sum": 0.0,
-                "abs_error_sum": 0.0,
+                "abs_delta_sum": 0.0,
                 "tracking_weight": 0.0,
                 "within_band_minutes": 0.0,
                 "hvac_action_minutes": Counter(),
@@ -86,7 +86,7 @@ def build_setpoint_profiles(samples) -> dict:
             bucket["indoor_sum"] += indoor * dt
             bucket["indoor_weight"] += dt
             bucket["signed_delta_sum"] += delta * dt
-            bucket["abs_error_sum"] += abs(delta) * dt
+            bucket["abs_delta_sum"] += abs(delta) * dt
             bucket["tracking_weight"] += dt
             if abs(delta) <= TRACKING_BAND_C:
                 bucket["within_band_minutes"] += dt
@@ -115,8 +115,8 @@ def build_setpoint_profiles(samples) -> dict:
                         if tracking_weight > 0
                         else None
                     ),
-                    "mean_abs_tracking_error_c": (
-                        round(bucket["abs_error_sum"] / tracking_weight, 2)
+                    "mean_abs_delta_to_setpoint_c": (
+                        round(bucket["abs_delta_sum"] / tracking_weight, 2)
                         if tracking_weight > 0
                         else None
                     ),
@@ -155,14 +155,13 @@ def build_setpoint_profiles(samples) -> dict:
         "tracking_band_c": TRACKING_BAND_C,
         "tracking_band_semantics": "descriptive_tracking_only_not_a_comfort_threshold",
         "setpoint_source_rule": "recorded_Consigne_is_truth_never_hardcode_requested_temperatures",
+        "tracking_wording_rule": "use_ecart_a_la_consigne_not_erreur",
         "two_temperature_rule": (
             "for_each_active_cooling_or_heating_mode_highlight_the_two_longest_recorded_requested_"
             "temperatures_when_two_are_present;_keep_all_other_observed_regimes_for_audit"
         ),
     }
 
-    # Keep the validated H-2 contract unchanged. Rich opening/context material is
-    # attached only for periods longer than the H-2 profile.
     if _observed_span_minutes(ordered) > DAY_CONTEXT_MINUTES:
         result["opening_interactions"] = build_opening_interactions(ordered)
         result["day_expertise_guardrails"] = {
