@@ -5,6 +5,7 @@ from statistics import mean
 
 from .engine import compare_results
 from .facts import build_thermal_facts
+from .h2_trend import classify_temperature_evolution
 
 
 def _dt_minutes(a, b):
@@ -293,8 +294,14 @@ def _delta(current, previous, *path):
 
 
 def compare_h2_segments(last_hour, previous_hour):
+    previous_temperature_delta = _value(previous_hour, "temperature_trend", "delta_c")
+    last_temperature_delta = _value(last_hour, "temperature_trend", "delta_c")
     return {
         "engine_delta": compare_results(last_hour["analysis"], previous_hour["analysis"]),
+        "temperature_evolution_classification": classify_temperature_evolution(
+            previous_temperature_delta,
+            last_temperature_delta,
+        ),
         "indoor_temperature_mean_delta_c": _delta(
             last_hour, previous_hour, "analysis", "temperature_indoor", "mean"
         ),
@@ -351,7 +358,7 @@ def compare_h2_segments(last_hour, previous_hour):
         ),
         "interpretation_rule": (
             "last_hour_is_primary; previous_hour_is_reference; "
-            "deltas_are_facts_not_causal_explanations"
+            "deltas_and_trend_classification_are_facts_not_causal_explanations"
         ),
     }
 
