@@ -95,8 +95,13 @@ def test_h2_contract_uses_last_hour_as_primary_and_previous_as_reference() -> No
     )
     assert contract["prompt_version"] == "h2-expert-v1"
     assert "top_level_analysis_is_the_legacy_two_hour_aggregate" in contract["h2_result_rule"]
+    assert "weaken_the_conclusion_explicitly" in contract["quality_rule"]
     assert "distinguish_fact_observation_hypothesis_and_uncertainty" in contract["evidence_rule"]
+    assert "possible_inertia" in contract["setpoint_transition_rule"]
     assert "dehumidification_or_modulation" in contract["dehumidification_rule"]
+    assert "cooling_and_heating_modes" in contract["ventilation_context_rule"]
+    assert "distinguish_solar_geometry_bright_sky_and_effective_sun" in contract["solar_rule"]
+    assert contract["response_contract"]["status_rules"]["ALERTE"].startswith("use_only_for_clearly_abnormal")
     assert "three_or_four_useful_conclusions" in contract["response_contract"]["assist_voice_rule"]
 
     last = h2["last_hour"]
