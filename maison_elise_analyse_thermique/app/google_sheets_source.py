@@ -87,7 +87,13 @@ class GoogleSheetsDataSource(DataSource):
         now = time.monotonic()
         if self._cached_samples is not None and self._cached_at is not None and now - self._cached_at <= self.cache_ttl_seconds:
             return self._cached_samples
-        rows = self.worksheet.get_all_records(default_blank="")
+        # Keep formatted values as strings. gspread's default numericise() treats
+        # commas as thousands separators, so French decimals such as "19,3"
+        # would otherwise become 193 before our locale-aware _float() parser.
+        rows = self.worksheet.get_all_records(
+            default_blank="",
+            numericise_ignore=["all"],
+        )
         samples = [sample for row in rows if (sample := _row_to_sample(row, self.tz)) is not None]
         samples.sort(key=lambda sample: sample.ts)
         self._cached_samples = samples
