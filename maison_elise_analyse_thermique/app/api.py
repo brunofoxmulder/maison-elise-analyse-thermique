@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -9,6 +10,7 @@ from pydantic import BaseModel
 
 from .data_source import InMemoryDataSource
 from .google_sheets_source import GoogleSheetsDataSource
+from .mcp_server import build_mcp_server
 from .natural_periods import resolve_natural_period
 from .service import ThermalAnalysisService
 
@@ -32,9 +34,22 @@ def _build_source():
     return InMemoryDataSource([])
 
 
-app = FastAPI(title="Maison Élise — Analyse thermique", version=APP_VERSION)
 source = _build_source()
 service = ThermalAnalysisService(source)
+mcp_server = build_mcp_server(service)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    async with mcp_server.session_manager.run():
+        yield
+
+
+app = FastAPI(
+    title="Maison Élise — Analyse thermique",
+    version=APP_VERSION,
+    lifespan=lifespan,
+)
 
 
 class AnalyseBody(BaseModel):
@@ -82,3 +97,8 @@ def analyse_natural(body: NaturalAnalyseBody):
         return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# Keep the legacy HTTP routes above this catch-all mount so their paths remain
+# unchanged, while FastMCP serves its default Streamable HTTP endpoint at /mcp.
+app.mount("/", mcp_server.streamable_http_app())
