@@ -34,7 +34,7 @@ class RecordingService:
         result = {
             "period": {"start": start.isoformat(), "end": end.isoformat()},
             "analysis": {"marker": "deterministic"},
-            "thermal_facts": [{"fact": "deterministic"}],
+            "thermal_facts": {"facts": [{"id": "deterministic", "label": "Fait", "value": 1}]},
         }
         if compare is not None:
             result["comparison"] = {
@@ -52,16 +52,26 @@ class RecordingService:
         return result
 
 
+class RecordingPublisher:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def publish(self, result: dict) -> dict:
+        self.calls.append(result)
+        return {"enabled": True, "status": "sent", "service": "notify.test"}
+
+
 class NeverLoadSource:
     def load(self, start: datetime, end: datetime):
         raise AssertionError("invalid periods must fail before reading the data source")
 
 
-def _test_mcp_app(service, now_provider=None) -> tuple[FastAPI, object]:
+def _test_mcp_app(service, now_provider=None, notification_publisher=None) -> tuple[FastAPI, object]:
     mcp_server = build_mcp_server(
         service,
         timezone="Europe/Paris",
         now_provider=now_provider,
+        notification_publisher=notification_publisher,
     )
     test_app = FastAPI()
     test_app.mount("/", mcp_server.streamable_http_app())
@@ -69,8 +79,12 @@ def _test_mcp_app(service, now_provider=None) -> tuple[FastAPI, object]:
 
 
 @asynccontextmanager
-async def _session_for(service, now_provider=None):
-    test_app, mcp_server = _test_mcp_app(service, now_provider=now_provider)
+async def _session_for(service, now_provider=None, notification_publisher=None):
+    test_app, mcp_server = _test_mcp_app(
+        service,
+        now_provider=now_provider,
+        notification_publisher=notification_publisher,
+    )
     transport = httpx.ASGITransport(app=test_app)
     async with mcp_server.session_manager.run():
         async with httpx.AsyncClient(
@@ -121,7 +135,7 @@ def test_initialize_twice_like_home_assistant_config_flow() -> None:
     asyncio.run(scenario())
 
 
-def test_list_tools_exposes_only_analyse_thermique() -> None:
+def test_list_tools_exposes_ergonomic_analysis_contract() -> None:
     async def scenario() -> None:
         async with _session_for(RecordingService()) as session:
             await session.initialize()
@@ -134,26 +148,30 @@ def test_list_tools_exposes_only_analyse_thermique() -> None:
                 "start",
                 "end",
                 "compare",
+                "day",
+                "start_time",
+                "end_time",
             }
             assert set(tool.inputSchema["required"]) == {"mode"}
             assert tool.inputSchema["properties"]["mode"]["enum"] == [
                 "current_h2",
+                "relative_day",
                 "explicit",
+                "last_result",
             ]
+            assert "Analyse heure" in tool.description
             assert "mode=current_h2" in tool.description
-            assert "ne pas calculer de date/heure" in tool.description
-            assert "last_hour est le sujet principal" in tool.description
-            assert "analysis_contract" in tool.description
-            assert "Fait / Observation / Hypothèse / Incertitude" in tool.description
-            assert "température Daikin terrasse" in tool.description
-            assert "plus frais" in tool.description
-            assert "forecast_h4" in tool.description
-            assert "NORMAL / VIGILANCE / ALERTE" in tool.description
+            assert "mode=relative_day" in tool.description
+            assert "donne-moi le détail" in tool.description
+            assert "mode=last_result" in tool.description
+            assert "constat, analyse prudente" in tool.description
+            assert "0 %=fermé, 100 %=ouvert" in tool.description
+            assert "ne jamais parler de demain" in tool.description
 
     asyncio.run(scenario())
 
 
-def test_call_tool_returns_json_as_structured_content() -> None:
+def test_call_tool_returns_core_json_plus_interaction_contract() -> None:
     async def scenario() -> None:
         service = RecordingService()
         async with _session_for(service) as session:
@@ -169,20 +187,22 @@ def test_call_tool_returns_json_as_structured_content() -> None:
 
         assert result.isError is False
         assert result.structuredContent is not None
-        assert result.structuredContent == {
-            "period": {
-                "start": "2026-08-29T00:00:00+02:00",
-                "end": "2026-08-30T00:00:00+02:00",
-            },
-            "analysis": {"marker": "deterministic"},
-            "thermal_facts": [{"fact": "deterministic"}],
+        structured = result.structuredContent
+        assert structured["period"] == {
+            "start": "2026-08-29T00:00:00+02:00",
+            "end": "2026-08-30T00:00:00+02:00",
         }
-        assert json.loads(result.content[0].text) == result.structuredContent
+        assert structured["analysis"] == {"marker": "deterministic"}
+        assert structured["interaction_contract"]["voice_short_response"]["order"] == [
+            "constat",
+            "analyse",
+            "preconisation",
+            "a_venir",
+        ]
+        assert structured["interaction_contract"]["shutter_position_semantics"]["100"] == "fully_open"
+        assert structured["automatic_notification"]["status"] == "disabled"
+        assert json.loads(result.content[0].text) == structured
         assert len(service.calls) == 1
-        start, end, compare = service.calls[0]
-        assert start == datetime.fromisoformat("2026-08-29T00:00:00+02:00")
-        assert end == datetime.fromisoformat("2026-08-30T00:00:00+02:00")
-        assert compare is None
 
     asyncio.run(scenario())
 
@@ -232,6 +252,7 @@ def test_current_h2_uses_app_clock_and_ignores_llm_dates_and_compare() -> None:
         assert start == datetime.fromisoformat("2026-08-30T16:30:00+02:00")
         assert end == fixed_now
         assert compare is None
+        assert result.structuredContent["interaction_context"]["voice_request_alias"] == "Analyse heure"
         text = diagnostics_text()
         assert 'MCP_DIAG resolution' in text
         assert '"mode":"current_h2"' in text
@@ -239,6 +260,71 @@ def test_current_h2_uses_app_clock_and_ignores_llm_dates_and_compare() -> None:
         assert '"resolved_start":"2026-08-30T16:30:00+02:00"' in text
         assert '"resolved_end":"2026-08-30T18:30:00+02:00"' in text
         assert '"resolved_compare":null' in text
+
+    asyncio.run(scenario())
+
+
+def test_relative_day_resolves_today_and_yesterday_with_app_clock() -> None:
+    async def scenario() -> None:
+        service = RecordingService()
+        fixed_now = datetime.fromisoformat("2026-08-30T19:00:00+02:00")
+        async with _session_for(service, now_provider=lambda: fixed_now) as session:
+            await session.initialize()
+            today = await session.call_tool(
+                "AnalyseThermique",
+                {
+                    "mode": "relative_day",
+                    "day": "today",
+                    "start_time": "13",
+                    "end_time": "17:00",
+                },
+            )
+            yesterday = await session.call_tool(
+                "AnalyseThermique",
+                {
+                    "mode": "relative_day",
+                    "day": "yesterday",
+                    "start_time": "08:00",
+                    "end_time": "15:00",
+                },
+            )
+
+        assert today.isError is False
+        assert yesterday.isError is False
+        assert service.calls[0][0] == datetime.fromisoformat("2026-08-30T13:00:00+02:00")
+        assert service.calls[0][1] == datetime.fromisoformat("2026-08-30T17:00:00+02:00")
+        assert service.calls[1][0] == datetime.fromisoformat("2026-08-29T08:00:00+02:00")
+        assert service.calls[1][1] == datetime.fromisoformat("2026-08-29T15:00:00+02:00")
+
+    asyncio.run(scenario())
+
+
+def test_last_result_reuses_same_analysis_without_recalculation_or_notification() -> None:
+    async def scenario() -> None:
+        service = RecordingService()
+        publisher = RecordingPublisher()
+        async with _session_for(service, notification_publisher=publisher) as session:
+            await session.initialize()
+            first = await session.call_tool(
+                "AnalyseThermique",
+                {
+                    "mode": "explicit",
+                    "start": "2026-08-29T13:00:00+02:00",
+                    "end": "2026-08-29T17:00:00+02:00",
+                },
+            )
+            detail = await session.call_tool("AnalyseThermique", {"mode": "last_result"})
+
+        assert first.isError is False
+        assert detail.isError is False
+        assert len(service.calls) == 1
+        assert len(publisher.calls) == 1
+        assert detail.structuredContent["period"] == first.structuredContent["period"]
+        assert detail.structuredContent["interaction_context"] == {
+            "reused_previous_analysis": True,
+            "fresh_analysis": False,
+            "automatic_notification_repeated": False,
+        }
 
     asyncio.run(scenario())
 
@@ -253,6 +339,26 @@ def test_explicit_mode_requires_start_and_end() -> None:
             )
         assert result.isError is True
         assert "start and end are required when mode=explicit" in result.content[0].text
+
+    asyncio.run(scenario())
+
+
+def test_relative_day_rejects_invalid_local_window() -> None:
+    async def scenario() -> None:
+        fixed_now = datetime.fromisoformat("2026-08-30T19:00:00+02:00")
+        async with _session_for(RecordingService(), now_provider=lambda: fixed_now) as session:
+            await session.initialize()
+            result = await session.call_tool(
+                "AnalyseThermique",
+                {
+                    "mode": "relative_day",
+                    "day": "today",
+                    "start_time": "17:00",
+                    "end_time": "13:00",
+                },
+            )
+        assert result.isError is True
+        assert "end_time must be after start_time" in result.content[0].text
 
     asyncio.run(scenario())
 
