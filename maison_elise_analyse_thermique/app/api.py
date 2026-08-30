@@ -61,10 +61,14 @@ def _build_forecast_provider():
 
 def _build_notification_publisher():
     token = os.getenv("SUPERVISOR_TOKEN")
+    mail_service = os.getenv("THERMAL_MAIL_SERVICE", "")
     if not token:
         return UnavailableNotificationPublisher("supervisor_token_unavailable")
     try:
-        return HomeAssistantNotificationPublisher(token=token)
+        return HomeAssistantNotificationPublisher(
+            token=token,
+            mail_service=mail_service,
+        )
     except ValueError:
         return UnavailableNotificationPublisher("invalid_notification_configuration")
 
