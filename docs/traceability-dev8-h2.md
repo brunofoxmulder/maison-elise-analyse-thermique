@@ -37,7 +37,7 @@ Réintroduite uniquement comme microclimat terrasse. Jamais référence météo.
 
 ### D-8.6 — météo H+4
 
-Source : Home Assistant natif, entité `weather.dammarie_les_lys`, action `weather.get_forecasts` en mode hourly via l’API Core interne.
+Source : Home Assistant natif, entité configurable via `weather_entity`, action `weather.get_forecasts` en mode hourly via l’API Core interne. `weather.dammarie_les_lys` reste uniquement la valeur par défaut historique issue des Pyscripts.
 
 Motif : réutiliser la source météo déjà gouvernée par Home Assistant, sans fournisseur parallèle.
 
@@ -53,9 +53,27 @@ Prompt : `h2-expert-v1`, stocké dans `docs/h2-expert-prompt-v1.md`.
 
 Règles : chiffres déterministes = source de vérité ; pas de recalcul LLM ; Fait/Observation/Hypothèse/Incertitude ; statut NORMAL/VIGILANCE/ALERTE ; conseils Volets/Aération/Daikin ; raisonnement été/hiver ; météo H+4 prospective seulement.
 
+### D-8.9 — transport réel du prompt par le MCP natif HA
+
+Découverte pendant la revue pré-merge : Home Assistant Core 2026.8.3 construit l’API LLM MCP avec un prompt générique et les tools retournés par `list_tools()`. Il reprend `tool.description`, mais ne retransmet pas les `instructions` du serveur MCP à l’agent conversationnel.
+
+Risque : un prompt expert stocké uniquement en Markdown ou dans `FastMCP(instructions=...)` peut être correct en documentation mais ne jamais influencer Assist/Mistral.
+
+Correction : les règles H−2 indispensables sont désormais dupliquées de façon compacte et versionnée dans la `description` de `AnalyseThermique`, dans `expertise_h2.analysis_contract` et dans les `interpretation_rule` des blocs. Le prompt long reste la source documentaire de référence ; le contrat compact est la couche réellement transportée vers le LLM.
+
+Un test MCP vérifie que la description exposée par `list_tools()` contient les règles essentielles. Toute évolution future du prompt doit vérifier les deux couches : documentation longue + contrat runtime.
+
 ## Corrections de cohérence découvertes pendant la dev
 
-`config.yaml` était déjà passé en `0.1.0-dev.8`, mais `app/api.py` et le `Dockerfile` étaient restés en dev.7. Les deux ont été alignés sur dev.8 avant toute tentative de merge ou déploiement.
+1. `config.yaml` était déjà passé en `0.1.0-dev.8`, mais `app/api.py` et le `Dockerfile` étaient restés en dev.7. Les deux ont été alignés sur dev.8 avant toute tentative de merge ou déploiement.
+2. La documentation météo mentionnait encore `weather.dammarie_les_lys` comme source fixe alors que la dev.8 rend déjà `weather_entity` configurable. La documentation a été alignée : cette entité n’est qu’une valeur par défaut.
+3. Le prompt expert était initialement versionné mais pas garanti d’être visible par Assist/Mistral à travers le MCP natif. Revue du code officiel HA 2026.8.3 puis correction D-8.9 avant merge.
+
+## Diffusion future
+
+- l’adresse mail historique issue des Pyscripts n’est jamais publiée ni codée en dur dans GitHub ;
+- pour hebdo/mensuel, privilégier une cible de notification/mail Home Assistant configurable ;
+- l’ancien `notify.maison_cognitive` / SMTP reste une référence historique à réévaluer selon les règles Home Assistant au moment du branchement de la diffusion.
 
 ## Hors périmètre
 
