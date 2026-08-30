@@ -7,6 +7,7 @@ from typing import Literal
 
 
 ExpertStatus = Literal["NORMAL", "VIGILANCE", "ALERTE"]
+ReportProfile = Literal["hour", "day"]
 
 
 def _clean(value: str, field_name: str) -> str:
@@ -31,15 +32,24 @@ def build_expert_report(
     vigilance: str,
     conclusion: str,
     source_period: dict | None = None,
+    profile: ReportProfile = "hour",
+    setpoints: str | None = None,
 ) -> dict:
     if status not in ("NORMAL", "VIGILANCE", "ALERTE"):
         raise ValueError("status must be NORMAL, VIGILANCE or ALERTE")
+    if profile not in ("hour", "day"):
+        raise ValueError("profile must be hour or day")
+    if profile == "day" and (not isinstance(setpoints, str) or not setpoints.strip()):
+        raise ValueError("setpoints is required when profile=day")
+
     report = {
         "analysis_id": _clean(analysis_id, "analysis_id"),
+        "profile": profile,
         "status": status,
         "short_response": _clean(short_response, "short_response"),
         "sections": {
             "situation": _clean(situation, "situation"),
+            "setpoints": setpoints.strip() if isinstance(setpoints, str) and setpoints.strip() else None,
             "evolution": _clean(evolution, "evolution"),
             "energy": _clean(energy, "energy"),
             "explanations": _clean(explanations, "explanations"),
@@ -57,7 +67,7 @@ def build_expert_report(
     return report
 
 
-def render_expert_report(report: dict) -> str:
+def _render_hour_report(report: dict) -> str:
     sections = report["sections"]
     recommendations = sections["recommendations"]
     return "\n\n".join(
@@ -81,8 +91,40 @@ def render_expert_report(report: dict) -> str:
     )
 
 
+def _render_day_report(report: dict) -> str:
+    sections = report["sections"]
+    recommendations = sections["recommendations"]
+    return "\n\n".join(
+        [
+            "## Situation\n" + sections["situation"],
+            "## 🌡️ Consignes et suivi\n" + sections["setpoints"],
+            "## Évolution de la journée\n" + sections["evolution"],
+            "## ⚡ Énergie Daikin\n" + sections["energy"],
+            "## Explications prudentes\n" + sections["explanations"],
+            "## Bilan et recommandations\n"
+            + "\n".join(
+                [
+                    f"- **Volets :** {recommendations['shutters']}",
+                    f"- **Aération :** {recommendations['ventilation']}",
+                    f"- **Daikin :** {recommendations['daikin']}",
+                    f"- **Suite / à venir :** {sections['outlook']}",
+                ]
+            ),
+            "## Points de vigilance\n" + sections["vigilance"],
+            f"## Conclusion\n**{report['status']}.** {sections['conclusion']}",
+        ]
+    )
+
+
+def render_expert_report(report: dict) -> str:
+    if report.get("profile", "hour") == "day":
+        return _render_day_report(report)
+    return _render_hour_report(report)
+
+
 def notification_title(report: dict) -> str:
-    return f"Analyse thermique — heure · {report['status']}"
+    profile = "jour" if report.get("profile", "hour") == "day" else "heure"
+    return f"Analyse thermique — {profile} · {report['status']}"
 
 
 class ExpertReportStore:
