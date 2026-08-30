@@ -17,6 +17,57 @@ H2_SOURCE_LOOKBACK_HOURS = 3
 H2_MAX_END_LAG_FOR_CURRENT_MINUTES = 15.0
 
 
+def _life_state_context(samples):
+    """Résume le signal historique sommeil/réveil de la période analysée.
+
+    True = réveillé, False = dort. None reste inconnu et n'est jamais assimilé
+    au sommeil. Les durées suivent la même règle temporelle que le moteur :
+    intervalle porté par le relevé de début, plafonné à 15 minutes.
+    """
+    awake_minutes = 0.0
+    asleep_minutes = 0.0
+    unknown_minutes = 0.0
+    transitions = 0
+    previous_known = None
+
+    for a, b in zip(samples, samples[1:]):
+        dt = max(0.0, min((b.ts - a.ts).total_seconds() / 60.0, 15.0))
+        if a.awake is True:
+            awake_minutes += dt
+        elif a.awake is False:
+            asleep_minutes += dt
+        else:
+            unknown_minutes += dt
+
+        if a.awake is not None:
+            if previous_known is not None and a.awake != previous_known:
+                transitions += 1
+            previous_known = a.awake
+
+    known_minutes = awake_minutes + asleep_minutes
+    total_minutes = known_minutes + unknown_minutes
+    if awake_minutes > 0 and asleep_minutes == 0:
+        dominant_state = "awake"
+    elif asleep_minutes > 0 and awake_minutes == 0:
+        dominant_state = "asleep"
+    elif awake_minutes > 0 and asleep_minutes > 0:
+        dominant_state = "mixed"
+    else:
+        dominant_state = "unknown"
+
+    return {
+        "awake_minutes": round(awake_minutes, 1),
+        "asleep_minutes": round(asleep_minutes, 1),
+        "unknown_minutes": round(unknown_minutes, 1),
+        "known_minutes": round(known_minutes, 1),
+        "coverage": round(known_minutes / total_minutes, 3) if total_minutes > 0 else 0.0,
+        "dominant_state": dominant_state,
+        "transitions": transitions,
+        "source": "historical_sheet_column_Prisse_de_comptage".replace("Prisse", "Prise"),
+        "interpretation": "awake_true_asleep_false_context_only",
+    }
+
+
 class ThermalAnalysisService:
     def __init__(self, source, config=None, forecast_provider=None):
         self.source = source
@@ -28,6 +79,7 @@ class ThermalAnalysisService:
         analysis = analyse_samples(samples, self.config)
         apply_period_temporal_coverage(analysis, samples, start, end)
         apply_energy_temporal_coverage(analysis, samples, start, end)
+        analysis["life_state"] = _life_state_context(samples)
         analysis["input_quality"] = input_quality
         analysis["raw_samples"] = len(raw_samples)
         return analysis, samples
@@ -202,6 +254,11 @@ class ThermalAnalysisService:
                 ),
                 "wind_rule": (
                     "outdoor_wind_can_inform_ventilation_potential_but_never_proves_indoor_airflow"
+                ),
+                "life_state_rule": (
+                    "use_the_historical_life_state_from_the_analyzed_period; "
+                    "awake_means_Bruno_is_awake_and_asleep_means_Bruno_is_sleeping; "
+                    "never_replace_historical_context_with_the_current_Home_Assistant_state"
                 ),
                 "response_contract": {
                     "status": ["NORMAL", "VIGILANCE", "ALERTE"],
