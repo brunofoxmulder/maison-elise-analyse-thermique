@@ -82,6 +82,7 @@ def test_mcp_diagnostic_traces_loaded_deduplicated_means_and_deltas() -> None:
             result = await session.call_tool(
                 "AnalyseThermique",
                 {
+                    "mode": "explicit",
                     "start": "2026-08-29T00:00:00+02:00",
                     "end": "2026-08-29T23:59:59+02:00",
                     "compare": "previous_day",
@@ -92,6 +93,8 @@ def test_mcp_diagnostic_traces_loaded_deduplicated_means_and_deltas() -> None:
     asyncio.run(scenario())
 
     text = diagnostics_text()
+    assert "MCP_DIAG resolution" in text
+    assert '"mode":"explicit"' in text
     assert "MCP_DIAG current_analysis" in text
     assert '"raw_samples":290' in text
     assert '"samples_after_dedup":289' in text
