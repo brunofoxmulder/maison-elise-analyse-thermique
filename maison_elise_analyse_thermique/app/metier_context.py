@@ -2,9 +2,11 @@ from __future__ import annotations
 
 
 METIER_CONTEXT_VERSION = "V1.1"
+METIER_CONTEXT_SOURCE = "referentiel_metier_clim.txt V1.1 / Scripts - Maison Cognitive"
 
 METIER_CONTEXT = {
     "version": METIER_CONTEXT_VERSION,
+    "source": METIER_CONTEXT_SOURCE,
     "role": {
         "app": "collect_filter_calculate_compare_compile_deterministic_facts",
         "llm": "interpret_contextualize_form_hypotheses_and_give_expert_opinion",
