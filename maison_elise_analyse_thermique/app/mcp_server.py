@@ -6,6 +6,7 @@ from datetime import datetime
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, TextContent
 
+from .diagnostics import record_error, record_request, record_result
 from .service import ThermalAnalysisService
 
 
@@ -36,7 +37,13 @@ def build_mcp_server(service: ThermalAnalysisService) -> FastMCP:
         end: datetime,
         compare: str | None = None,
     ) -> CallToolResult:
-        result = service.analyse(start, end, compare)
+        record_request(start, end, compare)
+        try:
+            result = service.analyse(start, end, compare)
+        except Exception as exc:
+            record_error(start, end, compare, exc)
+            raise
+        record_result(result)
         return CallToolResult(
             content=[
                 TextContent(
