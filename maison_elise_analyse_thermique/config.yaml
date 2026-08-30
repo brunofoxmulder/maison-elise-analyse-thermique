@@ -23,6 +23,7 @@ options:
   timezone: Europe/Paris
   weather_entity: weather.dammarie_les_lys
   notification_service: ""
+  mail_service: ""
 schema:
   service_account_file: str
   spreadsheet_id: str
@@ -30,3 +31,4 @@ schema:
   timezone: str
   weather_entity: str?
   notification_service: str?
+  mail_service: str?
