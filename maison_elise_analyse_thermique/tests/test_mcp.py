@@ -13,6 +13,7 @@ from mcp.client.streamable_http import streamable_http_client
 import pytest
 
 from app.api import APP_VERSION, app
+from app.diagnostics import clear_diagnostics, diagnostics_text
 from app.mcp_server import build_mcp_server
 from app.service import ThermalAnalysisService
 
@@ -38,7 +39,15 @@ class RecordingService:
         if compare is not None:
             result["comparison"] = {
                 "mode": compare,
-                "delta": {"marker": "comparison"},
+                "period": {
+                    "start": "2026-08-28T00:00:00+02:00",
+                    "end": "2026-08-29T00:00:00+02:00",
+                },
+                "delta": {
+                    "temperature_indoor_mean_delta_c": 0.28,
+                    "temperature_outdoor_mean_delta_c": 0.0,
+                    "cooling_while_any_opening_minutes_delta": -35.0,
+                },
             }
         return result
 
@@ -84,8 +93,15 @@ def test_legacy_http_contract_is_preserved() -> None:
             "data_source": "InMemoryDataSource",
         }
 
+        diagnostic = client.get("/diagnostic")
+        assert diagnostic.status_code == 200
+        assert "Copier le diagnostic" in diagnostic.text
+        assert 'id="diag"' in diagnostic.text
+        assert APP_VERSION in diagnostic.text
+
     route_paths = {getattr(route, "path", None) for route in app.routes}
     assert "/health" in route_paths
+    assert "/diagnostic" in route_paths
     assert "/analyse" in route_paths
     assert "/analyse/natural" in route_paths
 
@@ -156,17 +172,52 @@ def test_call_tool_forwards_optional_comparison() -> None:
             result = await session.call_tool(
                 "AnalyseThermique",
                 {
-                    "start": "2026-08-23T00:00:00+02:00",
+                    "start": "2026-08-29T00:00:00+02:00",
                     "end": "2026-08-30T00:00:00+02:00",
-                    "compare": "previous_week",
+                    "compare": "previous_day",
                 },
             )
 
         assert result.isError is False
-        assert result.structuredContent["comparison"]["mode"] == "previous_week"
-        assert service.calls[0][2] == "previous_week"
+        assert result.structuredContent["comparison"]["mode"] == "previous_day"
+        assert service.calls[0][2] == "previous_day"
 
     asyncio.run(scenario())
+
+
+def test_mcp_diagnostic_records_request_result_and_copy_page() -> None:
+    async def scenario() -> None:
+        clear_diagnostics()
+        async with _session_for(RecordingService()) as session:
+            await session.initialize()
+            result = await session.call_tool(
+                "AnalyseThermique",
+                {
+                    "start": "2026-08-29T00:00:00+02:00",
+                    "end": "2026-08-30T00:00:00+02:00",
+                    "compare": "previous_day",
+                },
+            )
+        assert result.isError is False
+
+    asyncio.run(scenario())
+
+    text = diagnostics_text()
+    assert 'MCP_DIAG request' in text
+    assert '"start":"2026-08-29T00:00:00+02:00"' in text
+    assert '"end":"2026-08-30T00:00:00+02:00"' in text
+    assert '"compare":"previous_day"' in text
+    assert 'MCP_DIAG result' in text
+    assert '"temperature_indoor_mean_delta_c":0.28' in text
+    assert '"temperature_outdoor_mean_delta_c":0.0' in text
+    assert '"cooling_while_any_opening_minutes_delta":-35.0' in text
+
+    with TestClient(app) as client:
+        page = client.get("/diagnostic")
+        assert page.status_code == 200
+        assert "Copier le diagnostic" in page.text
+        assert "MCP_DIAG request" in page.text
+        assert "MCP_DIAG result" in page.text
 
 
 @pytest.mark.parametrize(
