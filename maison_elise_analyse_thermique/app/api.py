@@ -15,7 +15,7 @@ from .natural_periods import resolve_natural_period
 from .service import ThermalAnalysisService
 
 
-APP_VERSION = "0.1.0-dev.3"
+APP_VERSION = "0.1.0-dev.4"
 
 
 def _build_source():
