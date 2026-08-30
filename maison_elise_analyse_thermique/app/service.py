@@ -9,12 +9,14 @@ from .h2_expertise import build_h2_expertise
 from .normalization import deduplicate_near_samples
 from .periods import reference_period, validate_period
 from .temporal_quality import apply_period_temporal_coverage
+from .weather_forecast import UnavailableWeatherForecastProvider
 
 
 class ThermalAnalysisService:
-    def __init__(self, source, config=None):
+    def __init__(self, source, config=None, forecast_provider=None):
         self.source = source
         self.config = config or AnalysisConfig()
+        self.forecast_provider = forecast_provider or UnavailableWeatherForecastProvider()
 
     def _prepare_period(self, start, end):
         raw_samples = self.source.load(start, end)
@@ -34,6 +36,14 @@ class ThermalAnalysisService:
     def _is_h2_period(start, end):
         duration_minutes = (end - start).total_seconds() / 60.0
         return 110.0 <= duration_minutes <= 130.0
+
+    def _forecast_h4(self, end):
+        try:
+            return self.forecast_provider.get_h4(end)
+        except Exception:
+            # Forecast context must never make the deterministic retrospective
+            # analysis fail. Missing weather is exposed as uncertainty instead.
+            return UnavailableWeatherForecastProvider("forecast_provider_error").get_h4(end)
 
     def _build_h2(self, end):
         last_start = end - timedelta(hours=1)
@@ -59,6 +69,7 @@ class ThermalAnalysisService:
                 "start": last_start.isoformat(),
                 "end": end.isoformat(),
             },
+            forecast_h4=self._forecast_h4(end),
         )
 
     def analyse(self, start, end, compare=None):
