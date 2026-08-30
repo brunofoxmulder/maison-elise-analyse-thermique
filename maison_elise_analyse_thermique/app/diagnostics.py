@@ -54,6 +54,29 @@ def _analysis_snapshot(period: dict | None, analysis: dict | None) -> dict:
     }
 
 
+def record_resolution(
+    mode: str,
+    received_start: datetime | None,
+    received_end: datetime | None,
+    received_compare: str | None,
+    resolved_start: datetime,
+    resolved_end: datetime,
+    resolved_compare: str | None,
+) -> None:
+    _append(
+        "resolution",
+        {
+            "mode": mode,
+            "received_start": received_start.isoformat() if received_start else None,
+            "received_end": received_end.isoformat() if received_end else None,
+            "received_compare": received_compare,
+            "resolved_start": resolved_start.isoformat(),
+            "resolved_end": resolved_end.isoformat(),
+            "resolved_compare": resolved_compare,
+        },
+    )
+
+
 def record_request(start: datetime, end: datetime, compare: str | None) -> None:
     _append(
         "request",
