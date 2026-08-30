@@ -102,6 +102,68 @@ def _tool_result(result: dict) -> CallToolResult:
     )
 
 
+def _apply_interaction_contract(result: dict) -> None:
+    contract = {
+        "voice_short_response": {
+            "order": ["constat", "analyse", "preconisation", "a_venir"],
+            "max_sentences": 5,
+            "plain_text_no_markdown_headings": True,
+            "internal_terms_to_hide": ["H-2", "H−2", "current_h2", "expertise_h2"],
+            "a_venir_rule": (
+                "only_use_prospective_context_actually_present_in_the_result; "
+                "omit_a_venir_for_historical_requests_when_no_applicable_forecast_is_provided"
+            ),
+        },
+        "detail_follow_up": {
+            "user_phrase": "donne-moi le détail",
+            "reuse_same_analysis": True,
+            "preferred_behavior": (
+                "expand_from_the_previous_tool_result_without_a_new_analysis; "
+                "if_a_tool_call_is_needed_use_mode=last_result"
+            ),
+        },
+        "shutter_position_semantics": {
+            "0": "fully_closed",
+            "100": "fully_open",
+            "intermediate": "percentage_open",
+            "rule": "never_invert_cover_position_semantics",
+        },
+        "forecast_horizon_rule": (
+            "forecast_h4_is_the_only_prospective_horizon_provided_by_this_H2_result; "
+            "never_mention_tomorrow_or_any_time_after_the_last_forecast_h4_point_unless_the_user_explicitly_requests_another_forecast"
+        ),
+        "automatic_notification_rule": (
+            "a_detailed_deterministic_notification_is_published_automatically_when_a_notification_service_is_configured; "
+            "do_not_repeat_notification_content_in_the_short_voice_answer"
+        ),
+    }
+    result["interaction_contract"] = contract
+
+    expertise = result.get("expertise_h2")
+    if not isinstance(expertise, dict):
+        return
+    analysis_contract = expertise.get("analysis_contract")
+    if not isinstance(analysis_contract, dict):
+        analysis_contract = {}
+        expertise["analysis_contract"] = analysis_contract
+    analysis_contract.update(
+        {
+            "shutter_position_rule": "cover_position_0_is_closed_100_is_open",
+            "forecast_scope_rule": contract["forecast_horizon_rule"],
+            "voice_ergonomics_rule": (
+                "short_voice_answer_is_plain_text_few_sentences_in_order_constat_analyse_preconisation_a_venir; "
+                "detail_is_expanded_only_on_user_request"
+            ),
+        }
+    )
+    response_contract = analysis_contract.get("response_contract")
+    if isinstance(response_contract, dict):
+        response_contract["assist_voice_rule"] = (
+            "plain_text_only; few_sentences; order_constat_analyse_preconisation_a_venir; "
+            "no_markdown_headings; hide_internal_H2_terms; expand_only_when_user_requests_detail"
+        )
+
+
 def build_mcp_server(
     service: ThermalAnalysisService,
     timezone: str = "Europe/Paris",
@@ -216,6 +278,7 @@ def build_mcp_server(
             record_error(resolved_start, resolved_end, resolved_compare, exc)
             raise
 
+        _apply_interaction_contract(result)
         delivery = notification_publisher.publish(result)
         result["automatic_notification"] = delivery
         result["interaction_context"] = {
