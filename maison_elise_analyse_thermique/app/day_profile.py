@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import Counter
+
+from .day_interactions import build_opening_interactions
 
 
 TRACKING_BAND_C = 0.5
 MAX_INTERVAL_MINUTES = 15.0
+DAY_CONTEXT_MINUTES = 130.0
 
 
 def _dt_minutes(a, b) -> float:
@@ -25,6 +28,13 @@ def _append_segment(segments: list[dict], start, end) -> None:
         segments[-1]["end"] = end.isoformat()
         return
     segments.append({"start": start.isoformat(), "end": end.isoformat()})
+
+
+def _observed_span_minutes(samples) -> float:
+    ordered = sorted(samples, key=lambda sample: sample.ts)
+    if len(ordered) < 2:
+        return 0.0
+    return max(0.0, (ordered[-1].ts - ordered[0].ts).total_seconds() / 60.0)
 
 
 def build_setpoint_profiles(samples) -> dict:
@@ -139,7 +149,7 @@ def build_setpoint_profiles(samples) -> dict:
     if modes:
         dominant_mode = max(modes, key=lambda mode: modes[mode]["total_minutes"])
 
-    return {
+    result = {
         "dominant_active_hvac_mode": dominant_mode,
         "modes": modes,
         "tracking_band_c": TRACKING_BAND_C,
@@ -150,3 +160,39 @@ def build_setpoint_profiles(samples) -> dict:
             "temperatures_when_two_are_present;_keep_all_other_observed_regimes_for_audit"
         ),
     }
+
+    # Keep the validated H-2 contract unchanged. Rich opening/context material is
+    # attached only for periods longer than the H-2 profile.
+    if _observed_span_minutes(ordered) > DAY_CONTEXT_MINUTES:
+        result["opening_interactions"] = build_opening_interactions(ordered)
+        result["day_expertise_guardrails"] = {
+            "evidence_rule": (
+                "distinguish_fact_observation_hypothesis_and_uncertainty; "
+                "coexistence_or_sequence_does_not_prove_causality"
+            ),
+            "openings_rule": (
+                "describe_when_and_in_what_measured_context_openings_were_used; "
+                "do_not_claim_that_they_helped_or_harmed_without_validated_historical_evidence"
+            ),
+            "counterfactual_rule": (
+                "do_not_say_the_user_should_have_opened_or_closed; this_profile_does_not_yet_have_"
+                "validated_house_specific_experience_for_counterfactual_advice"
+            ),
+            "energy_qualification_rule": (
+                "do_not_call_energy_low_moderate_high_optimal_or_excessive_without_an_explicit_"
+                "validated_comparison_or_baseline"
+            ),
+            "shutter_rule": (
+                "shutter_position_and_solar_context_are_measured_facts; do_not_say_shutters_allowed_"
+                "or_caused_temperature_regulation_without_supporting_evidence"
+            ),
+            "outdoor_temperature_rule": (
+                "outdoor_temperature_alone_never_explains_continuous_cooling_or_heating"
+            ),
+            "historical_day_rule": (
+                "for_a_past_day_prefer_a_retrospective_performance_balance; do_not_invent_actions_"
+                "for_today_or_future_conditions_that_are_not_in_the_requested_analysis"
+            ),
+        }
+
+    return result
