@@ -1,7 +1,7 @@
 name: Maison Élise — Analyse thermique
 slug: maison_elise_analyse_thermique
-description: Analyse thermique déterministe avec restitution Assist et notification détaillée configurable.
-version: 0.1.0-dev.10
+description: Analyse thermique déterministe avec synthèse Assist et rapport détaillé automatique dans Home Assistant.
+version: 0.1.0-dev.11
 url: https://github.com/brunofoxmulder/maison-elise-analyse-thermique
 startup: application
 boot: manual
