@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import httpx
 
 from app.notification_publisher import HomeAssistantNotificationPublisher
@@ -84,7 +85,7 @@ def test_detailed_notification_states_shutter_semantics_and_h4_only() -> None:
     assert "demain" not in text.lower()
 
 
-def test_home_assistant_notification_publisher_sends_once_per_observed_h2_sample() -> None:
+def test_home_assistant_persistent_notification_updates_one_ha_notification() -> None:
     requests = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -93,7 +94,6 @@ def test_home_assistant_notification_publisher_sends_once_per_observed_h2_sample
 
     publisher = HomeAssistantNotificationPublisher(
         token="secret-token",
-        service_target="notify.mobile_app_phone",
         transport=httpx.MockTransport(handler),
     )
     result = _h2_result()
@@ -102,10 +102,13 @@ def test_home_assistant_notification_publisher_sends_once_per_observed_h2_sample
     second = publisher.publish(result)
 
     assert first["status"] == "sent"
+    assert first["service"] == "persistent_notification.create"
     assert second["status"] == "duplicate_skipped"
     assert len(requests) == 1
     request = requests[0]
-    assert request.url.path.endswith("/services/notify/mobile_app_phone")
+    assert request.url.path.endswith("/services/persistent_notification/create")
     assert request.headers["authorization"] == "Bearer secret-token"
-    assert b"Analyse thermique" in request.content
-    assert b"100 % (ouvert)" in request.content
+    payload = json.loads(request.content)
+    assert payload["notification_id"] == "maison_elise_analyse_thermique"
+    assert "Analyse thermique" in payload["title"]
+    assert "100 % (ouvert)" in payload["message"]
