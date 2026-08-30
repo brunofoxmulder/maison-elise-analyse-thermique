@@ -71,6 +71,7 @@ def test_compressor_regime_durations_keep_missing_frequency_unknown():
 
 def test_metier_context_v11_matches_current_architecture():
     assert METIER_CONTEXT_VERSION == "V1.1"
+    assert METIER_CONTEXT["source"].startswith("referentiel_metier_clim.txt V1.1")
     assert METIER_CONTEXT["life_state"]["source"] == "historical_sheet_column_Prise_de_comptage"
     assert METIER_CONTEXT["life_state"]["unknown"] == "do_not_infer"
     assert METIER_CONTEXT["daikin"]["power_w_rule"] == "instantaneous_W_values_are_not_used_for_current_thermal_expertise"
