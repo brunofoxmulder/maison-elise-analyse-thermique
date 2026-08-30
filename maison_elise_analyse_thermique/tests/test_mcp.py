@@ -12,7 +12,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 import pytest
 
-from app.api import APP_VERSION, app
+from app.api import APP_VERSION, app, diagnostic as diagnostic_page
 from app.diagnostics import clear_diagnostics, diagnostics_text
 from app.mcp_server import build_mcp_server
 from app.service import ThermalAnalysisService
@@ -212,12 +212,12 @@ def test_mcp_diagnostic_records_request_result_and_copy_page() -> None:
     assert '"temperature_outdoor_mean_delta_c":0.0' in text
     assert '"cooling_while_any_opening_minutes_delta":-35.0' in text
 
-    with TestClient(app) as client:
-        page = client.get("/diagnostic")
-        assert page.status_code == 200
-        assert "Copier le diagnostic" in page.text
-        assert "MCP_DIAG request" in page.text
-        assert "MCP_DIAG result" in page.text
+    page = diagnostic_page()
+    page_text = page.body.decode("utf-8")
+    assert page.status_code == 200
+    assert "Copier le diagnostic" in page_text
+    assert "MCP_DIAG request" in page_text
+    assert "MCP_DIAG result" in page_text
 
 
 @pytest.mark.parametrize(
