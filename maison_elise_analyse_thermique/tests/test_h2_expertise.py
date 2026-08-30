@@ -89,9 +89,15 @@ def test_h2_contract_uses_last_hour_as_primary_and_previous_as_reference() -> No
     assert h2["profile"] == "h2_last_hour_vs_previous_hour"
     assert h2["primary_period"]["start"] == "2026-08-30T11:00:00+02:00"
     assert h2["reference_period"]["start"] == "2026-08-30T10:00:00+02:00"
-    assert h2["analysis_contract"]["primary_rule"] == (
+    contract = h2["analysis_contract"]
+    assert contract["primary_rule"] == (
         "analyse_the_last_hour_and_compare_it_with_the_previous_hour"
     )
+    assert contract["prompt_version"] == "h2-expert-v1"
+    assert "top_level_analysis_is_the_legacy_two_hour_aggregate" in contract["h2_result_rule"]
+    assert "distinguish_fact_observation_hypothesis_and_uncertainty" in contract["evidence_rule"]
+    assert "dehumidification_or_modulation" in contract["dehumidification_rule"]
+    assert "three_or_four_useful_conclusions" in contract["response_contract"]["assist_voice_rule"]
 
     last = h2["last_hour"]
     previous = h2["previous_hour"]
