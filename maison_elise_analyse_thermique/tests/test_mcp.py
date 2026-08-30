@@ -19,7 +19,7 @@ from app.service import ThermalAnalysisService
 
 
 class RecordingService:
-    """Small spy used to verify the MCP facade without exercising the dev.3 engine."""
+    """Small spy used to verify the MCP facade without exercising the engine."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[datetime, datetime, str | None]] = []
@@ -33,7 +33,7 @@ class RecordingService:
         self.calls.append((start, end, compare))
         result = {
             "period": {"start": start.isoformat(), "end": end.isoformat()},
-            "analysis": {"marker": "dev.3"},
+            "analysis": {"marker": "deterministic"},
             "thermal_facts": [{"fact": "deterministic"}],
         }
         if compare is not None:
@@ -127,11 +127,13 @@ def test_list_tools_exposes_only_analyse_thermique() -> None:
             assert tool.name == "AnalyseThermique"
             assert set(tool.inputSchema["properties"]) == {"start", "end", "compare"}
             assert set(tool.inputSchema["required"]) == {"start", "end"}
+            assert "dernière heure" in tool.description
+            assert "météo H+4" in tool.description
 
     asyncio.run(scenario())
 
 
-def test_call_tool_returns_dev3_json_as_structured_content() -> None:
+def test_call_tool_returns_json_as_structured_content() -> None:
     async def scenario() -> None:
         service = RecordingService()
         async with _session_for(service) as session:
@@ -151,7 +153,7 @@ def test_call_tool_returns_dev3_json_as_structured_content() -> None:
                 "start": "2026-08-29T00:00:00+02:00",
                 "end": "2026-08-30T00:00:00+02:00",
             },
-            "analysis": {"marker": "dev.3"},
+            "analysis": {"marker": "deterministic"},
             "thermal_facts": [{"fact": "deterministic"}],
         }
         assert json.loads(result.content[0].text) == result.structuredContent
