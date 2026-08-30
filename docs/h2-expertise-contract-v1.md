@@ -35,22 +35,31 @@ L’IA reçoit les faits structurés et, avec son prompt métier versionné `h2-
 6. Les valeurs `Cool_energy_derniere_heure` et `Heat_energy_derniere_heure` sont des observations horaires ; elles ne doivent pas être additionnées à chaque relevé de cinq minutes.
 7. L’App ne commande aucun équipement. Le conseil appartient à l’IA et doit rester prudent.
 
+## Fenêtre temporelle H−2
+
+La revue pré-merge a confirmé la sémantique du Pyscript Horaire V5 : la fenêtre H−2 est ancrée sur le **dernier relevé réel disponible**, puis divisée en deux heures. Chaque heure inclut ses deux bornes lorsque les relevés existent ; le point H−1 est donc partagé. À la cadence de production de cinq minutes, une heure complète contient 13 points et 12 intervalles, soit 60 minutes réelles d’évolution.
+
+Cette règle est spécifique au profil H−2. Elle ne modifie pas la sémantique générique demi-ouverte des périodes arbitraires de l’App.
+
+Le JSON expose le décalage éventuel entre la fin demandée et le dernier relevé disponible. Au-delà de 15 minutes, l’IA doit signaler une incertitude de fraîcheur des données au lieu de présenter l’analyse comme parfaitement actuelle.
+
 ## Structure JSON `expertise_h2`
 
 Pour une période demandée d’environ deux heures, le service ajoute :
 
 - `profile = h2_last_hour_vs_previous_hour`
-- `primary_period` = dernière heure
-- `reference_period` = heure précédente
+- `primary_period` = dernière heure observée
+- `reference_period` = heure observée précédente
 - `last_hour`
 - `previous_hour`
 - `comparison`
+- `data_window` = période demandée, dernier relevé réel, retard éventuel et règle de bornes
 - `forecast_h4`
 - `analysis_contract`
 
 Chaque bloc horaire contient l’analyse existante et les enrichissements H−2. La comparaison fournit les deltas déterministes utiles sans produire de conclusion causale.
 
-`analysis_contract` identifie également `prompt_version = h2-expert-v1`, rappelle que `expertise_h2` est la matière principale pour une réponse H−2 et que le `analysis` de premier niveau reste seulement l’agrégat historique des deux heures. Il contient aussi les règles de preuve, de lecture du compresseur, de prudence sur déshumidification/modulation et le format de réponse attendu : NORMAL/VIGILANCE/ALERTE, situation, évolution, explications prudentes, conseil 2–4 h, vigilance, conclusion, avec conseils Volets / Aération / Daikin.
+`analysis_contract` identifie également `prompt_version = h2-expert-v1`, rappelle que `expertise_h2` est la matière principale pour une réponse H−2 et que le `analysis` de premier niveau reste seulement l’agrégat historique des deux heures. Il contient aussi les règles de preuve, de lecture du compresseur, de prudence sur déshumidification/modulation, de fraîcheur des données et le format de réponse attendu : NORMAL/VIGILANCE/ALERTE, situation, évolution, explications prudentes, conseil 2–4 h, vigilance, conclusion, avec conseils Volets / Aération / Daikin.
 
 ## Météo H+4 — décision d’architecture
 
@@ -91,6 +100,7 @@ Le JSON doit permettre à l’IA de répondre sans invention à :
 5. les ouvrants, le soleil et les volets apportent-ils un contexte pertinent ?
 6. la météo H+4 change-t-elle le conseil pour les prochaines heures ?
 7. quelles conclusions sont des faits, observations, hypothèses ou incertitudes ?
+8. les deux heures couvrent-elles réellement 60 minutes chacune et le dernier relevé est-il suffisamment récent ?
 
 Le LLM n’a pas à refaire les calculs.
 
