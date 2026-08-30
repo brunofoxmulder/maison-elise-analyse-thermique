@@ -29,6 +29,7 @@ def build_thermal_facts(analysis: dict, max_facts: int = 15) -> dict:
     energy = analysis.get("compressor_energy", {})
     hvac = analysis.get("hvac_action_minutes", {})
     life_state = analysis.get("life_state", {})
+    compressor_regimes = analysis.get("compressor_regimes", {})
 
     sample_count = analysis.get("samples", 0) or 0
     no_data = sample_count == 0
@@ -62,7 +63,24 @@ def build_thermal_facts(analysis: dict, max_facts: int = 15) -> dict:
 
     cooling_minutes = hvac.get("cooling")
     if cooling_minutes is not None:
-        facts.append(_fact("cooling_duration", 90, "Durée de refroidissement", cooling_minutes, "min"))
+        facts.append(_fact("cooling_duration", 90, "Durée en action HVAC refroidissement", cooling_minutes, "min", context={"rule": "hvac_action_cooling_does_not_mean_continuous_compressor_operation"}))
+
+    if compressor_regimes:
+        facts.append(_fact(
+            "compressor_regime_durations",
+            89,
+            "Durées compresseur par régime de fréquence",
+            compressor_regimes.get("minutes", {}),
+            "min",
+            context={
+                "coverage": compressor_regimes.get("coverage"),
+                "known_minutes": compressor_regimes.get("known_minutes"),
+                "unknown_minutes": compressor_regimes.get("unknown_minutes"),
+                "dominant_regime": compressor_regimes.get("dominant_regime"),
+                "thresholds_hz": compressor_regimes.get("thresholds_hz"),
+                "rule": compressor_regimes.get("rule"),
+            },
+        ))
 
     if life_state:
         facts.append(_fact(
