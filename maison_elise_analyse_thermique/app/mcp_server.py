@@ -16,7 +16,9 @@ def build_mcp_server(service: ThermalAnalysisService) -> FastMCP:
         name="Maison Élise — Analyse thermique",
         instructions=(
             "Serveur d'analyse thermique déterministe en lecture seule. "
-            "Le client choisit une période explicite puis interprète le JSON retourné."
+            "Le client choisit la période et interprète le JSON sans recalculer les chiffres. "
+            "Pour un diagnostic horaire H-2 courant, demander les deux dernières heures : "
+            "expertise_h2.last_hour est le sujet principal et previous_hour la référence immédiate."
         ),
         host="0.0.0.0",
         stateless_http=True,
@@ -28,8 +30,9 @@ def build_mcp_server(service: ThermalAnalysisService) -> FastMCP:
         description=(
             "Analyse une période thermique explicite en lecture seule. "
             "start et end doivent être des dates/heures ISO 8601 avec fuseau horaire. "
-            "compare est optionnel et accepte previous_period, previous_day, "
-            "previous_week ou previous_month."
+            "Pour une demande H-2/dernières heures, utiliser start=end-2h et end proche de maintenant : "
+            "le résultat fournit la dernière heure, l'heure précédente, leurs deltas et la météo H+4 si disponible. "
+            "compare est optionnel et accepte previous_period, previous_day, previous_week ou previous_month."
         ),
     )
     def analyse_thermique(
