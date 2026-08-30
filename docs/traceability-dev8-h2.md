@@ -63,11 +63,22 @@ Correction : les règles H−2 indispensables sont désormais dupliquées de fa�
 
 Un test MCP vérifie que la description exposée par `list_tools()` contient les règles essentielles. Toute évolution future du prompt doit vérifier les deux couches : documentation longue + contrat runtime.
 
+### D-8.10 — bornes horaires H−2 fidèles au Pyscript V5
+
+Découverte pendant la revue pré-merge : la première implémentation dev.8 réutilisait les périodes génériques demi-ouvertes `[start, end)` pour chacun des deux blocs H−2. À une cadence de cinq minutes, cela pouvait donner 12 points et une variation mesurée sur 55 minutes.
+
+Retour au code validé `Analyse_horaire_v5.py` : le Pyscript fixe `fin` au dernier relevé réel, calcule `milieu = fin - 1 h`, puis inclut les deux bornes de chaque heure (`debut <= ts <= milieu` et `milieu <= ts <= fin`). Le point H−1 est donc partagé. Une heure complète contient 13 points et 12 intervalles de cinq minutes = 60 minutes.
+
+Correction dev.8 : cette sémantique est restaurée **uniquement pour `expertise_h2`**, sans changer les périodes arbitraires du moteur. H−2 s’ancre sur le dernier relevé réellement disponible à ou avant la fin demandée. `data_window` expose le dernier relevé, le retard par rapport à la fin demandée, la présence du point H−1 partagé et les nombres de relevés par heure. Si le dernier relevé a plus de 15 minutes de retard, le contrat impose de signaler une incertitude de fraîcheur.
+
+Tests ajoutés : 25 points H−2, 13 points par heure, 60 minutes de couverture et de cooling par heure, variation réellement calculée sur 60 minutes, partage du point H−1, et cas de fin demandée 20 minutes après le dernier relevé.
+
 ## Corrections de cohérence découvertes pendant la dev
 
 1. `config.yaml` était déjà passé en `0.1.0-dev.8`, mais `app/api.py` et le `Dockerfile` étaient restés en dev.7. Les deux ont été alignés sur dev.8 avant toute tentative de merge ou déploiement.
 2. La documentation météo mentionnait encore `weather.dammarie_les_lys` comme source fixe alors que la dev.8 rend déjà `weather_entity` configurable. La documentation a été alignée : cette entité n’est qu’une valeur par défaut.
 3. Le prompt expert était initialement versionné mais pas garanti d’être visible par Assist/Mistral à travers le MCP natif. Revue du code officiel HA 2026.8.3 puis correction D-8.9 avant merge.
+4. Le premier découpage H−2 perdait une borne de chaque heure par rapport au Pyscript validé. Relecture du code historique puis correction D-8.10 avant merge.
 
 ## Diffusion future
 
