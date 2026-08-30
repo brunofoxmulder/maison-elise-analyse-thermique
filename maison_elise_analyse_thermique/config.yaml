@@ -1,7 +1,7 @@
 name: Maison Élise — Analyse thermique
 slug: maison_elise_analyse_thermique
 description: Analyse thermique déterministe, expertise LLM unique, synthèse Assist et rapport expert publié dans Home Assistant.
-version: 0.1.0-dev.12
+version: 0.1.0-dev.13
 url: https://github.com/brunofoxmulder/maison-elise-analyse-thermique
 startup: application
 boot: manual
@@ -23,6 +23,7 @@ options:
   timezone: Europe/Paris
   weather_entity: weather.dammarie_les_lys
   notification_service: ""
+  mail_entity: ""
 schema:
   service_account_file: str
   spreadsheet_id: str
@@ -30,3 +31,4 @@ schema:
   timezone: str
   weather_entity: str?
   notification_service: str?
+  mail_entity: str?

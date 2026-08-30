@@ -7,6 +7,7 @@ from pathlib import Path
 
 DEFAULT_WEATHER_ENTITY = "weather.dammarie_les_lys"
 DEFAULT_NOTIFICATION_SERVICE = ""
+DEFAULT_MAIL_ENTITY = ""
 
 
 def build_runtime_env(options: dict) -> dict[str, str]:
@@ -34,6 +35,11 @@ def build_runtime_env(options: dict) -> dict[str, str]:
     if not isinstance(notification_service, str):
         notification_service = DEFAULT_NOTIFICATION_SERVICE
     env["THERMAL_NOTIFICATION_SERVICE"] = notification_service.strip()
+
+    mail_entity = options.get("mail_entity", DEFAULT_MAIL_ENTITY)
+    if not isinstance(mail_entity, str):
+        mail_entity = DEFAULT_MAIL_ENTITY
+    env["THERMAL_MAIL_ENTITY"] = mail_entity.strip()
     return env
 
 

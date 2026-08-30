@@ -81,6 +81,7 @@ def test_home_assistant_persistent_notification_publishes_expert_report_once() -
     assert first["status"] == "sent"
     assert first["service"] == "persistent_notification.create"
     assert first["analysis_id"] == "thermal-test"
+    assert first["mail"]["status"] == "disabled"
     assert second["status"] == "duplicate_skipped"
     assert len(requests) == 1
     request = requests[0]
@@ -93,3 +94,45 @@ def test_home_assistant_persistent_notification_publishes_expert_report_once() -
     assert "Fait :" in payload["message"]
     assert "Hypothèse :" in payload["message"]
     assert "**NORMAL.**" in payload["message"]
+
+
+def test_optional_smtp_output_uses_modern_notify_send_message_entity_action() -> None:
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=[])
+
+    publisher = HomeAssistantNotificationPublisher(
+        token="secret-token",
+        mail_entity="notify.maison_cognitive_email",
+        transport=httpx.MockTransport(handler),
+    )
+    result = publisher.publish(_expert_report())
+
+    assert result["status"] == "sent"
+    assert result["mail"] == {
+        "enabled": True,
+        "status": "sent",
+        "action": "notify.send_message",
+        "entity_id": "notify.maison_cognitive_email",
+    }
+    assert len(requests) == 2
+    mail_request = requests[1]
+    assert mail_request.url.path.endswith("/services/notify/send_message")
+    payload = json.loads(mail_request.content)
+    assert payload["entity_id"] == "notify.maison_cognitive_email"
+    assert payload["title"] == "Analyse thermique — heure · NORMAL"
+    assert "## Situation" in payload["message"]
+
+
+def test_invalid_mail_target_is_rejected() -> None:
+    try:
+        HomeAssistantNotificationPublisher(
+            token="secret-token",
+            mail_entity="notify_legacy.mail",
+        )
+    except ValueError as exc:
+        assert "notify.* entity" in str(exc)
+    else:
+        raise AssertionError("invalid mail target should be rejected")

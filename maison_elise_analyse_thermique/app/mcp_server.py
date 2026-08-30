@@ -19,6 +19,7 @@ from .diagnostics import (
 )
 from .expert_report import (
     ExpertReportStore,
+    ReportProfile,
     build_expert_report,
     render_expert_report,
 )
@@ -41,6 +42,10 @@ CompareMode = Literal[
 ReportStatus = Literal["NORMAL", "VIGILANCE", "ALERTE"]
 
 _TIME_RE = re.compile(r"^(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?$")
+_DATE_DMY_RE = re.compile(
+    r"^(?P<day>\d{1,2})[-/](?P<month>\d{1,2})(?:[-/](?P<year>\d{4}))?$"
+)
+_DATE_ISO_RE = re.compile(r"^(?P<year>\d{4})-(?P<month>\d{1,2})-(?P<day>\d{1,2})$")
 
 
 def _parse_clock(value: str, field_name: str) -> time:
@@ -62,24 +67,105 @@ def _normalize_now(now_value: datetime, tz: ZoneInfo) -> datetime:
     return now_value.astimezone(tz)
 
 
+def _resolve_day_selector(local_now: datetime, day: str | None) -> tuple[datetime, dict]:
+    selector = (day or "today").strip().lower()
+    year_source = "relative"
+
+    if selector == "today":
+        target_year = local_now.year
+        target_month = local_now.month
+        target_day = local_now.day
+    elif selector == "yesterday":
+        target = local_now.date() - timedelta(days=1)
+        target_year, target_month, target_day = target.year, target.month, target.day
+    else:
+        match = _DATE_DMY_RE.fullmatch(selector)
+        if match:
+            target_day = int(match.group("day"))
+            target_month = int(match.group("month"))
+            explicit_year = match.group("year")
+            if explicit_year is None:
+                target_year = local_now.year
+                year_source = "current_year_default"
+            else:
+                target_year = int(explicit_year)
+                year_source = "explicit"
+        else:
+            match = _DATE_ISO_RE.fullmatch(selector)
+            if not match:
+                raise ValueError(
+                    "day must be today, yesterday, DD-MM, DD-MM-YYYY or YYYY-MM-DD"
+                )
+            target_year = int(match.group("year"))
+            target_month = int(match.group("month"))
+            target_day = int(match.group("day"))
+            year_source = "explicit"
+
+    try:
+        target_start = datetime(target_year, target_month, target_day, tzinfo=local_now.tzinfo)
+    except ValueError as exc:
+        raise ValueError("day is not a valid calendar date") from exc
+
+    if target_start.date() > local_now.date():
+        raise ValueError("future thermal days cannot be analysed")
+
+    resolution = {
+        "received_selector": day,
+        "normalized_selector": selector,
+        "resolved_date": target_start.date().isoformat(),
+        "year_source": year_source,
+        "current_year_default_rule": (
+            "when_the_user_omits_the_year_the_App_uses_the_current_local_calendar_year"
+        ),
+        "historical_year_rule": "an_older_year_must_be_explicitly_requested",
+    }
+    return target_start, resolution
+
+
 def _relative_day_period(
     now_value: datetime,
     tz: ZoneInfo,
-    day: RelativeDay | None,
+    day: str | None,
     start_time: str | None,
     end_time: str | None,
-) -> tuple[datetime, datetime]:
-    if day not in ("today", "yesterday"):
-        raise ValueError("day is required when mode=relative_day")
+) -> tuple[datetime, datetime, dict, bool]:
     local_now = _normalize_now(now_value, tz)
-    target_date = local_now.date() - timedelta(days=1 if day == "yesterday" else 0)
-    start_clock = _parse_clock(start_time, "start_time")
-    end_clock = _parse_clock(end_time, "end_time")
-    start = datetime.combine(target_date, start_clock, tzinfo=tz)
-    end = datetime.combine(target_date, end_clock, tzinfo=tz)
+    target_start, resolution = _resolve_day_selector(local_now, day)
+
+    if (start_time is None) != (end_time is None):
+        raise ValueError("start_time and end_time must either both be supplied or both be omitted")
+
+    full_day_profile = start_time is None and end_time is None
+    if full_day_profile:
+        start = target_start
+        if target_start.date() == local_now.date():
+            end = local_now
+            completeness = "today_so_far"
+        else:
+            next_date = target_start.date() + timedelta(days=1)
+            end = datetime.combine(next_date, time.min, tzinfo=tz)
+            completeness = "completed_day"
+    else:
+        start_clock = _parse_clock(start_time, "start_time")
+        end_clock = _parse_clock(end_time, "end_time")
+        start = datetime.combine(target_start.date(), start_clock, tzinfo=tz)
+        end = datetime.combine(target_start.date(), end_clock, tzinfo=tz)
+        if end <= start:
+            raise ValueError("end_time must be after start_time on the selected day")
+        completeness = "explicit_intraday_window"
+
     if end <= start:
-        raise ValueError("end_time must be after start_time on the selected day")
-    return start, end
+        raise ValueError("selected day has no elapsed analysis interval yet")
+
+    resolution.update(
+        {
+            "full_day_profile": full_day_profile,
+            "completeness": completeness,
+            "resolved_start": start.isoformat(),
+            "resolved_end": end.isoformat(),
+        }
+    )
+    return start, end, resolution, full_day_profile
 
 
 def _normalize_compare(
@@ -140,12 +226,18 @@ def _apply_interaction_contract(result: dict) -> None:
                 "PublierRapportThermique",
                 "reply_with_short_response",
             ],
+            "required_order_for_full_day": [
+                "AnalyseThermique",
+                "one_complete_expertise",
+                "PublierRapportThermique_profile_day",
+                "reply_with_short_response",
+            ],
             "single_expertise_rule": (
                 "short_response_and_full_report_must_be_created_from_the_same_reasoning_pass; "
                 "never_answer_short_first_then_reanalyse_for_the_report"
             ),
             "publication_rule": (
-                "for_the_current_hour_call_PublierRapportThermique_once_after_the_expertise; "
+                "for_the_current_hour_or_a_full_day_call_PublierRapportThermique_once_after_the_expertise; "
                 "the_App_must_not_publish_raw_deterministic_facts_before_expertise"
             ),
         },
@@ -164,8 +256,8 @@ def _apply_interaction_contract(result: dict) -> None:
             ),
         },
         "full_expert_report": {
-            "minimum_quality": "at_least_equivalent_to_historical_hourly_pyscript_llm_report",
-            "sections": [
+            "minimum_quality": "at_least_equivalent_to_historical_pyscript_llm_report_for_the_selected_profile",
+            "hour_sections": [
                 "situation",
                 "evolution",
                 "energy",
@@ -175,7 +267,28 @@ def _apply_interaction_contract(result: dict) -> None:
                 "vigilance",
                 "conclusion_status",
             ],
+            "day_sections": [
+                "situation",
+                "setpoints_and_tracking",
+                "day_evolution",
+                "energy",
+                "explanations",
+                "recommendations_volets_aeration_daikin",
+                "vigilance",
+                "conclusion_status",
+            ],
             "epistemic_rule": "distinguish_fact_observation_hypothesis_uncertainty",
+        },
+        "day_profile_rule": {
+            "setpoints": (
+                "use_recorded_setpoint_profiles; analyse_the_two_dominant_requested_temperatures_separately_when_two_are_present; "
+                "never_replace_them_with_one_average_and_never_hardcode_19_21_or_any_other_setpoint"
+            ),
+            "season": "apply_the_same_rule_in_cooling_and_heating_modes",
+            "historical_scope": (
+                "for_a_completed_historical_day_do_not_invent_advice_for_today_or_future_weather; "
+                "describe_the_day_and_only_add_later_actions_if_the_user_explicitly_asked_for_them"
+            ),
         },
         "detail_follow_up": {
             "user_phrases": ["donne-moi le détail", "donne plus de détails", "détaille", "plus de détails"],
@@ -210,22 +323,34 @@ def _apply_interaction_contract(result: dict) -> None:
     }
     result["interaction_contract"] = contract
 
-    expertise = result.get("expertise_h2")
-    if not isinstance(expertise, dict):
-        return
-    analysis_contract = expertise.get("analysis_contract")
-    if not isinstance(analysis_contract, dict):
-        analysis_contract = {}
-        expertise["analysis_contract"] = analysis_contract
-    analysis_contract.update(
-        {
+    expertise_h2 = result.get("expertise_h2")
+    if isinstance(expertise_h2, dict):
+        analysis_contract = expertise_h2.get("analysis_contract")
+        if not isinstance(analysis_contract, dict):
+            analysis_contract = {}
+            expertise_h2["analysis_contract"] = analysis_contract
+        analysis_contract.update(
+            {
+                "shutter_position_rule": "cover_position_0_is_closed_100_is_open",
+                "forecast_scope_rule": contract["forecast_horizon_rule"],
+                "humidity_advice_rule": contract["humidity_rule"],
+                "causality_rule": contract["causality_rule"],
+                "expertise_then_publication_rule": contract["expertise_pipeline"],
+            }
+        )
+
+    expertise_day = result.get("expertise_day")
+    if isinstance(expertise_day, dict):
+        expertise_day["analysis_contract"] = {
+            "profile": "day",
+            "setpoint_rule": contract["day_profile_rule"]["setpoints"],
+            "season_rule": contract["day_profile_rule"]["season"],
+            "historical_scope_rule": contract["day_profile_rule"]["historical_scope"],
             "shutter_position_rule": "cover_position_0_is_closed_100_is_open",
-            "forecast_scope_rule": contract["forecast_horizon_rule"],
             "humidity_advice_rule": contract["humidity_rule"],
             "causality_rule": contract["causality_rule"],
             "expertise_then_publication_rule": contract["expertise_pipeline"],
         }
-    )
 
 
 def build_mcp_server(
@@ -262,16 +387,19 @@ def build_mcp_server(
             "Étape 1 du flux thermique. Calcule uniquement les faits déterministes : ne publie PAS de notification. "
             "Pour 'Analyse heure', 'analyse de l'heure', 'analyse actuelle' ou équivalent, utiliser mode=current_h2 ; "
             "l'App résout elle-même les deux dernières heures avec son horloge Europe/Paris, sans start/end calculés par le LLM. "
-            "Pour aujourd'hui/hier avec heures locales, utiliser mode=relative_day. Pour une date absolue historique, mode=explicit. "
-            "Après un current_h2 réussi, réaliser UNE SEULE expertise complète à partir du JSON, en produisant dans la même réflexion "
+            "Pour 'Analyse jour', 'analyse de la journée', 'analyse d'hier' ou une date comme '20 août', utiliser mode=relative_day SANS start_time/end_time. "
+            "Le champ day accepte today, yesterday, DD-MM, DD-MM-YYYY ou YYYY-MM-DD. Si l'utilisateur ne dit PAS l'année, transmettre DD-MM sans année : "
+            "l'App applique déterministiquement l'année locale en cours. Une année antérieure ne doit être envoyée que si l'utilisateur l'a explicitement dite. "
+            "Pour aujourd'hui/hier entre deux heures, utiliser mode=relative_day avec start_time et end_time. Pour une période absolue libre, mode=explicit. "
+            "Après un current_h2 ou une journée complète réussie, réaliser UNE SEULE expertise complète à partir du JSON, en produisant dans la même réflexion "
             "la réponse courte et le rapport complet. Puis appeler OBLIGATOIREMENT PublierRapportThermique avec l'analysis_id retourné. "
+            "Pour une journée complète, appeler PublierRapportThermique avec profile=day et remplir setpoints à partir de setpoint_profiles : "
+            "analyser séparément les deux températures demandées enregistrées quand elles sont présentes, en mode froid comme en chauffage, sans les moyenner en une seule consigne. "
             "Seulement après cette publication, répondre à l'utilisateur avec le short_response du rapport, sans refaire l'analyse. "
-            "Qualité minimale du rapport complet : au moins équivalente au rapport horaire historique Pyscript rédigé par l'agent, "
-            "avec Situation, Évolution, Énergie Daikin, Explications prudentes, Conseils Volets/Aération/Daikin, À venir H+4, Vigilance "
-            "et Conclusion NORMAL/VIGILANCE/ALERTE. Les chiffres déterministes sont la source de vérité : ne pas recalculer. "
+            "Qualité minimale du rapport complet : au moins équivalente au rapport historique Pyscript rédigé par l'agent. "
             "Convention volets 0 %=fermé, 100 %=ouvert. RH seule insuffisante pour aérer. Température Daikin terrasse = microclimat, "
             "jamais météo ni preuve de difficulté compresseur. Un extérieur plus frais n'implique pas automatiquement qu'il faut aérer. "
-            "forecast_h4 est le seul horizon prospectif. Pour 'plus de détails', NE PAS rappeler AnalyseThermique : utiliser DernierRapportThermique."
+            "Ne jamais transformer une corrélation en cause certaine. Pour 'plus de détails', NE PAS rappeler AnalyseThermique : utiliser DernierRapportThermique."
         ),
     )
     def analyse_thermique(
@@ -279,7 +407,7 @@ def build_mcp_server(
         start: datetime | None = None,
         end: datetime | None = None,
         compare: CompareMode | None = None,
-        day: RelativeDay | None = None,
+        day: str | None = None,
         start_time: str | None = None,
         end_time: str | None = None,
     ) -> CallToolResult:
@@ -288,13 +416,15 @@ def build_mcp_server(
         received_start = start
         received_end = end
         received_compare = compare
+        date_resolution = None
+        full_day_profile = False
 
         if mode == "current_h2":
             resolved_end = _normalize_now(now_provider(), tz)
             resolved_start = resolved_end - timedelta(hours=2)
             resolved_compare = None
         elif mode == "relative_day":
-            resolved_start, resolved_end = _relative_day_period(
+            resolved_start, resolved_end, date_resolution, full_day_profile = _relative_day_period(
                 now_provider(), tz, day, start_time, end_time
             )
             resolved_compare = _normalize_compare(compare, resolved_start, resolved_end)
@@ -325,18 +455,38 @@ def build_mcp_server(
             record_error(resolved_start, resolved_end, resolved_compare, exc)
             raise
 
+        if date_resolution is not None:
+            result["date_resolution"] = date_resolution
+        if full_day_profile:
+            result["expertise_day"] = {
+                "profile": "day",
+                "period": result.get("period"),
+                "date_resolution": date_resolution,
+                "setpoint_profiles": result.get("setpoint_profiles"),
+                "setpoint_interpretation_rule": (
+                    "use_the_recorded_requested_temperatures_and_their_time_ranges; "
+                    "when_two_are_present_analyse_each_separately_instead_of_using_one_average"
+                ),
+            }
+
         _apply_interaction_contract(result)
         analysis_id = _analysis_id(mode, result)
         result["analysis_id"] = analysis_id
-        result["expert_report_publication"] = {
-            "required": mode == "current_h2",
-            "status": "pending_expertise" if mode == "current_h2" else "optional",
-            "next_tool": "PublierRapportThermique" if mode == "current_h2" else None,
+        publication_required = mode == "current_h2" or full_day_profile
+        publication = {
+            "required": publication_required,
+            "status": "pending_expertise" if publication_required else "optional",
+            "next_tool": "PublierRapportThermique" if publication_required else None,
             "rule": "publication_occurs_only_after_the_LLM_has_completed_the_single_expertise",
         }
+        if full_day_profile:
+            publication["profile"] = "day"
+        result["expert_report_publication"] = publication
         result["interaction_context"] = {
             "fresh_analysis": True,
-            "voice_request_alias": "Analyse heure" if mode == "current_h2" else None,
+            "voice_request_alias": (
+                "Analyse jour" if full_day_profile else ("Analyse heure" if mode == "current_h2" else None)
+            ),
         }
         last_analysis_id = analysis_id
         last_analysis_result = result
@@ -346,13 +496,14 @@ def build_mcp_server(
     @mcp.tool(
         name="PublierRapportThermique",
         description=(
-            "Étape 2 OBLIGATOIRE après AnalyseThermique mode=current_h2. À appeler UNE SEULE FOIS après avoir réalisé l'expertise complète. "
+            "Étape 2 OBLIGATOIRE après AnalyseThermique mode=current_h2 ou après une journée complète. À appeler UNE SEULE FOIS après avoir réalisé l'expertise complète. "
             "Tous les champs doivent provenir de la MÊME expertise : short_response est la synthèse vocale de ce rapport, pas une analyse séparée. "
             "analysis_id doit être recopié exactement depuis AnalyseThermique ; l'App refuse un rapport détaché de la dernière analyse. "
-            "Le rapport doit être au minimum équivalent au Pyscript horaire expert : Situation, Évolution, Énergie Daikin, Explications prudentes, "
-            "Volets, Aération, Daikin, À venir H+4, Vigilance, Conclusion avec statut NORMAL/VIGILANCE/ALERTE. "
-            "Ne recalculer aucun chiffre et ne transformer aucune corrélation en cause certaine. Ce tool publie le rapport complet en notification "
-            "persistante Home Assistant, mémorise exactement cette expertise pour 'plus de détails', puis renvoie short_response. "
+            "Pour l'heure, laisser profile=hour. Pour une journée complète, utiliser profile=day et fournir setpoints : cette section doit décrire les consignes enregistrées, "
+            "leurs plages et le suivi thermique, en distinguant les deux températures demandées dominantes quand deux sont présentes, en froid comme en chauffage. "
+            "Le rapport doit être au minimum équivalent au Pyscript expert : Situation, Consignes et suivi pour le jour, Évolution, Énergie Daikin, Explications prudentes, "
+            "Volets, Aération, Daikin, Vigilance et Conclusion NORMAL/VIGILANCE/ALERTE. Ne recalculer aucun chiffre et ne transformer aucune corrélation en cause certaine. "
+            "Ce tool publie le rapport complet en notification persistante Home Assistant, mémorise exactement cette expertise pour 'plus de détails', puis renvoie short_response. "
             "Après son succès, répondre à l'utilisateur avec short_response uniquement, en quelques phrases."
         ),
     )
@@ -370,11 +521,15 @@ def build_mcp_server(
         outlook: str,
         vigilance: str,
         conclusion: str,
+        profile: ReportProfile = "hour",
+        setpoints: str | None = None,
     ) -> CallToolResult:
         if last_analysis_id is None or last_analysis_result is None:
             raise ValueError("no thermal analysis is awaiting an expert report")
         if analysis_id != last_analysis_id:
             raise ValueError("analysis_id does not match the latest thermal analysis")
+        if profile == "day" and not isinstance(last_analysis_result.get("expertise_day"), dict):
+            raise ValueError("profile=day requires the latest analysis to be a full day profile")
 
         expertise = last_analysis_result.get("expertise_h2")
         primary_period = None
@@ -383,6 +538,7 @@ def build_mcp_server(
         source_period = {
             "analysis_period": last_analysis_result.get("period"),
             "primary_period": primary_period,
+            "date_resolution": last_analysis_result.get("date_resolution"),
         }
         report = build_expert_report(
             analysis_id=analysis_id,
@@ -399,6 +555,8 @@ def build_mcp_server(
             vigilance=vigilance,
             conclusion=conclusion,
             source_period=source_period,
+            profile=profile,
+            setpoints=setpoints,
         )
         report_store.save(report)
         delivery = notification_publisher.publish(report)
@@ -406,6 +564,7 @@ def build_mcp_server(
         return _tool_result(
             {
                 "analysis_id": analysis_id,
+                "profile": profile,
                 "status": status,
                 "publication": delivery,
                 "short_response": report["short_response"],
@@ -418,7 +577,7 @@ def build_mcp_server(
         name="DernierRapportThermique",
         description=(
             "À utiliser uniquement quand l'utilisateur demande 'plus de détails', 'donne-moi le détail', 'détaille' ou équivalent "
-            "après une analyse thermique déjà publiée. Retourne EXACTEMENT le dernier rapport expert mémorisé. "
+            "après une analyse thermique déjà publiée. Retourne EXACTEMENT le dernier rapport expert mémorisé, heure ou jour. "
             "Ne pas appeler AnalyseThermique, ne pas recalculer et ne pas refaire une expertise. Lire/restituer full_report."
         ),
     )
@@ -429,6 +588,7 @@ def build_mcp_server(
         return _tool_result(
             {
                 "analysis_id": report["analysis_id"],
+                "profile": report.get("profile", "hour"),
                 "status": report["status"],
                 "short_response": report["short_response"],
                 "full_report": render_expert_report(report),
