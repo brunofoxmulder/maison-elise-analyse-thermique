@@ -22,21 +22,21 @@ from .weather_forecast import (
 )
 
 
-APP_VERSION = "0.1.0-dev.8"
+APP_VERSION = "0.1.0-dev.9"
+APP_TIMEZONE = os.getenv("THERMAL_TIMEZONE", "Europe/Paris")
 
 
 def _build_source():
     service_account_file = os.getenv("THERMAL_GOOGLE_SERVICE_ACCOUNT_FILE")
     spreadsheet_id = os.getenv("THERMAL_SPREADSHEET_ID")
     worksheet_name = os.getenv("THERMAL_WORKSHEET_NAME", "Confort thermique")
-    timezone = os.getenv("THERMAL_TIMEZONE", "Europe/Paris")
 
     if service_account_file and spreadsheet_id:
         return GoogleSheetsDataSource(
             service_account_file=service_account_file,
             spreadsheet_id=spreadsheet_id,
             worksheet_name=worksheet_name,
-            timezone=timezone,
+            timezone=APP_TIMEZONE,
         )
     return InMemoryDataSource([])
 
@@ -58,7 +58,7 @@ def _build_forecast_provider():
 source = _build_source()
 forecast_provider = _build_forecast_provider()
 service = ThermalAnalysisService(source, forecast_provider=forecast_provider)
-mcp_server = build_mcp_server(service)
+mcp_server = build_mcp_server(service, timezone=APP_TIMEZONE)
 
 
 @asynccontextmanager
@@ -160,9 +160,8 @@ def analyse(body: AnalyseBody):
 @app.post("/analyse/natural")
 def analyse_natural(body: NaturalAnalyseBody):
     try:
-        timezone = os.getenv("THERMAL_TIMEZONE", "Europe/Paris")
-        now = datetime.now(ZoneInfo(timezone))
-        start, end = resolve_natural_period(body.period, now, timezone)
+        now = datetime.now(ZoneInfo(APP_TIMEZONE))
+        start, end = resolve_natural_period(body.period, now, APP_TIMEZONE)
         result = service.analyse(start, end, body.compare)
         result["period_request"] = {
             "text": body.period,
