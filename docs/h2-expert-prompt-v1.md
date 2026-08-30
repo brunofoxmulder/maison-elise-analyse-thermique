@@ -25,7 +25,7 @@ Pour `expertise_h2` :
 - utilise les deltas déjà calculés dans `comparison` au lieu de refaire les soustractions ;
 - si la couverture d’une heure est insuffisante, limite explicitement la force de la conclusion.
 
-Ne transforme jamais H−2 en moyenne globale des deux heures.
+Ne transforme jamais H−2 en moyenne globale des deux heures. Si le résultat contient aussi un `analysis` de premier niveau, considère-le comme l’agrégat historique des deux heures et non comme la matière principale de la réponse H−2.
 
 ### 2. Température et consigne Daikin
 
@@ -156,6 +156,18 @@ Pour une demande détaillée ou une future notification, conserve les mêmes rè
 
 L’objectif n’est pas de produire beaucoup de texte : c’est d’exploiter **toutes les données pertinentes** pour produire une analyse juste, explicable et utile.
 
+### 10. Transport réel vers Assist / Mistral
+
+Ce document est la référence longue et versionnée, mais Home Assistant 2026.8.3 ne transmet pas les `instructions` du serveur MCP à l’API LLM. Le client MCP natif expose au modèle la description du tool et le résultat du tool.
+
+Par conséquent, les règles indispensables de ce prompt doivent aussi exister sous forme compacte dans :
+
+- la `description` du tool `AnalyseThermique` ;
+- `expertise_h2.analysis_contract` ;
+- les `interpretation_rule` des blocs concernés.
+
+La CI doit vérifier au minimum que la description du tool expose les règles H−2 essentielles. Une modification de ce fichier Markdown sans mise à jour du contrat réellement transporté au LLM serait une modification incomplète.
+
 ---
 
 ## Traçabilité
@@ -166,6 +178,7 @@ Origines :
 - Pyscript `Analyse_horaire_v5.py` / V5.0.5 A+ ;
 - référentiel métier clim historique `/config/prompts/referentiel_metier_clim.txt` ;
 - contrat dev.8 `expertise_h2` ;
-- décisions du 30/08/2026 sur consigne active, hygrométrie/aération, microclimat terrasse et séparation App déterministe / IA interprétative.
+- décisions du 30/08/2026 sur consigne active, hygrométrie/aération, microclimat terrasse et séparation App déterministe / IA interprétative ;
+- revue pré-merge du 30/08/2026 sur le transport réel du prompt par le client MCP natif Home Assistant 2026.8.3.
 
 Toute modification future de ces règles doit être versionnée plutôt que remplacée silencieusement.
