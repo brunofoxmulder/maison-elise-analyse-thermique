@@ -1,7 +1,7 @@
 name: Maison Élise — Analyse thermique
 slug: maison_elise_analyse_thermique
 description: Analyse thermique déterministe en lecture seule, en parallèle de l'existant.
-version: 0.1.0-dev.7
+version: 0.1.0-dev.8
 url: https://github.com/brunofoxmulder/maison-elise-analyse-thermique
 startup: application
 boot: manual
