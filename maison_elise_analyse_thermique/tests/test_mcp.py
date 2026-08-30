@@ -57,16 +57,20 @@ class NeverLoadSource:
         raise AssertionError("invalid periods must fail before reading the data source")
 
 
-def _test_mcp_app(service) -> tuple[FastAPI, object]:
-    mcp_server = build_mcp_server(service)
+def _test_mcp_app(service, now_provider=None) -> tuple[FastAPI, object]:
+    mcp_server = build_mcp_server(
+        service,
+        timezone="Europe/Paris",
+        now_provider=now_provider,
+    )
     test_app = FastAPI()
     test_app.mount("/", mcp_server.streamable_http_app())
     return test_app, mcp_server
 
 
 @asynccontextmanager
-async def _session_for(service):
-    test_app, mcp_server = _test_mcp_app(service)
+async def _session_for(service, now_provider=None):
+    test_app, mcp_server = _test_mcp_app(service, now_provider=now_provider)
     transport = httpx.ASGITransport(app=test_app)
     async with mcp_server.session_manager.run():
         async with httpx.AsyncClient(
@@ -125,8 +129,19 @@ def test_list_tools_exposes_only_analyse_thermique() -> None:
             assert len(tools.tools) == 1
             tool = tools.tools[0]
             assert tool.name == "AnalyseThermique"
-            assert set(tool.inputSchema["properties"]) == {"start", "end", "compare"}
-            assert set(tool.inputSchema["required"]) == {"start", "end"}
+            assert set(tool.inputSchema["properties"]) == {
+                "mode",
+                "start",
+                "end",
+                "compare",
+            }
+            assert set(tool.inputSchema["required"]) == {"mode"}
+            assert tool.inputSchema["properties"]["mode"]["enum"] == [
+                "current_h2",
+                "explicit",
+            ]
+            assert "mode=current_h2" in tool.description
+            assert "ne pas calculer de date/heure" in tool.description
             assert "last_hour est le sujet principal" in tool.description
             assert "analysis_contract" in tool.description
             assert "Fait / Observation / Hypothèse / Incertitude" in tool.description
@@ -146,6 +161,7 @@ def test_call_tool_returns_json_as_structured_content() -> None:
             result = await session.call_tool(
                 "AnalyseThermique",
                 {
+                    "mode": "explicit",
                     "start": "2026-08-29T00:00:00+02:00",
                     "end": "2026-08-30T00:00:00+02:00",
                 },
@@ -179,6 +195,7 @@ def test_call_tool_forwards_optional_comparison() -> None:
             result = await session.call_tool(
                 "AnalyseThermique",
                 {
+                    "mode": "explicit",
                     "start": "2026-08-29T00:00:00+02:00",
                     "end": "2026-08-30T00:00:00+02:00",
                     "compare": "previous_day",
@@ -192,6 +209,54 @@ def test_call_tool_forwards_optional_comparison() -> None:
     asyncio.run(scenario())
 
 
+def test_current_h2_uses_app_clock_and_ignores_llm_dates_and_compare() -> None:
+    async def scenario() -> None:
+        clear_diagnostics()
+        service = RecordingService()
+        fixed_now = datetime.fromisoformat("2026-08-30T18:30:00+02:00")
+        async with _session_for(service, now_provider=lambda: fixed_now) as session:
+            await session.initialize()
+            result = await session.call_tool(
+                "AnalyseThermique",
+                {
+                    "mode": "current_h2",
+                    "start": "2023-10-16T14:00:00+02:00",
+                    "end": "2023-10-16T15:00:00+02:00",
+                    "compare": "previous_day",
+                },
+            )
+
+        assert result.isError is False
+        assert len(service.calls) == 1
+        start, end, compare = service.calls[0]
+        assert start == datetime.fromisoformat("2026-08-30T16:30:00+02:00")
+        assert end == fixed_now
+        assert compare is None
+        text = diagnostics_text()
+        assert 'MCP_DIAG resolution' in text
+        assert '"mode":"current_h2"' in text
+        assert '"received_start":"2023-10-16T14:00:00+02:00"' in text
+        assert '"resolved_start":"2026-08-30T16:30:00+02:00"' in text
+        assert '"resolved_end":"2026-08-30T18:30:00+02:00"' in text
+        assert '"resolved_compare":null' in text
+
+    asyncio.run(scenario())
+
+
+def test_explicit_mode_requires_start_and_end() -> None:
+    async def scenario() -> None:
+        async with _session_for(RecordingService()) as session:
+            await session.initialize()
+            result = await session.call_tool(
+                "AnalyseThermique",
+                {"mode": "explicit"},
+            )
+        assert result.isError is True
+        assert "start and end are required when mode=explicit" in result.content[0].text
+
+    asyncio.run(scenario())
+
+
 def test_mcp_diagnostic_records_request_result_and_copy_page() -> None:
     async def scenario() -> None:
         clear_diagnostics()
@@ -200,6 +265,7 @@ def test_mcp_diagnostic_records_request_result_and_copy_page() -> None:
             result = await session.call_tool(
                 "AnalyseThermique",
                 {
+                    "mode": "explicit",
                     "start": "2026-08-29T00:00:00+02:00",
                     "end": "2026-08-30T00:00:00+02:00",
                     "compare": "previous_day",
@@ -210,6 +276,8 @@ def test_mcp_diagnostic_records_request_result_and_copy_page() -> None:
     asyncio.run(scenario())
 
     text = diagnostics_text()
+    assert 'MCP_DIAG resolution' in text
+    assert '"mode":"explicit"' in text
     assert 'MCP_DIAG request' in text
     assert '"start":"2026-08-29T00:00:00+02:00"' in text
     assert '"end":"2026-08-30T00:00:00+02:00"' in text
@@ -223,6 +291,7 @@ def test_mcp_diagnostic_records_request_result_and_copy_page() -> None:
     page_text = page.body.decode("utf-8")
     assert page.status_code == 200
     assert "Copier le diagnostic" in page_text
+    assert "MCP_DIAG resolution" in page_text
     assert "MCP_DIAG request" in page_text
     assert "MCP_DIAG result" in page_text
 
@@ -253,7 +322,7 @@ def test_period_errors_are_reported_by_the_existing_service(
             await session.initialize()
             result = await session.call_tool(
                 "AnalyseThermique",
-                {"start": start, "end": end},
+                {"mode": "explicit", "start": start, "end": end},
             )
 
         assert result.isError is True
