@@ -3,89 +3,66 @@ from __future__ import annotations
 import json
 import httpx
 
+from app.expert_report import build_expert_report, render_expert_report
 from app.notification_publisher import HomeAssistantNotificationPublisher
-from app.notification_report import build_notification_report
 
 
-def _h2_result():
-    return {
-        "period": {
-            "start": "2026-08-30T16:50:00+02:00",
-            "end": "2026-08-30T18:50:00+02:00",
-        },
-        "expertise_h2": {
+def _expert_report():
+    return build_expert_report(
+        analysis_id="thermal-test",
+        status="NORMAL",
+        short_response=(
+            "Le salon reste stable à 21,3 °C près de la consigne. "
+            "Aucune action particulière n'est nécessaire pour le moment."
+        ),
+        situation=(
+            "La dernière heure est stable à 21,3 °C pour une consigne de 21,0 °C, "
+            "avec 54 % d'humidité intérieure."
+        ),
+        evolution=(
+            "La température intérieure reste stable par rapport à l'heure précédente, "
+            "tandis que l'extérieur fiable baisse progressivement."
+        ),
+        energy="Le Daikin a consommé 0,20 kWh sur la dernière heure à faible fréquence compresseur.",
+        explanations=(
+            "Fait : la température intérieure est stable. Hypothèse : la modulation du Daikin "
+            "est compatible avec le maintien de la consigne ; ce n'est pas une causalité prouvée."
+        ),
+        shutters_advice="Maintenir l'état actuel ; aucun apport solaire direct pertinent n'est observé.",
+        ventilation_advice=(
+            "Pas d'ouverture immédiate recommandée ; réévaluer lorsque température et humidité absolue "
+            "extérieures deviennent réellement favorables."
+        ),
+        daikin_advice="Conserver le fonctionnement actuel tant que le confort reste stable.",
+        outlook="L'horizon H+4 prévoit un rafraîchissement progressif de l'extérieur.",
+        vigilance="Aucun point de vigilance particulier pour le moment.",
+        conclusion="Le confort est maîtrisé et stable ; aucune action immédiate n'est nécessaire.",
+        source_period={
             "primary_period": {
-                "start": "2026-08-30T17:50:00+02:00",
-                "end": "2026-08-30T18:50:00+02:00",
-            },
-            "last_hour": {
-                "analysis": {
-                    "temperature_indoor": {"mean": 21.3, "min": 21.3, "max": 21.3},
-                    "temperature_outdoor_reference": {"mean": 24.1},
-                    "humidity_indoor": {"mean": 54.0},
-                    "hvac_action_minutes": {"cooling": 60.0},
-                    "compressor_frequency": {"mean": 16.0},
-                    "openings": {
-                        "window_open_minutes": 0.0,
-                        "door_window_open_minutes": 0.0,
-                    },
-                    "shutters": {
-                        "salon": {"mean": 100.0},
-                        "terrasse": {"mean": 100.0},
-                    },
-                },
-                "temperature_trend": {"delta_c": 0.0},
-                "setpoint_tracking": {"latest_setpoint_c": 21.0},
-                "air_properties": {
-                    "indoor_absolute_humidity_g_m3": {"mean": 10.1},
-                    "outdoor_absolute_humidity_g_m3": {"mean": 11.2},
-                },
-                "hourly_energy_observation": {
-                    "cool_energy_last_hour_kwh": {"value": 0.3}
-                },
-            },
-            "comparison": {
-                "temperature_evolution_classification": {
-                    "id": "stable_both_hours",
-                    "label_fr": "stabilité sur les deux heures",
-                },
-                "indoor_temperature_mean_delta_c": 0.1,
-            },
-            "data_window": {
-                "observed_end": "2026-08-30T18:50:00+02:00",
-                "last_hour_samples": 13,
-                "requested_end_to_observed_end_lag_minutes": 1.0,
-            },
-            "forecast_h4": {
-                "available": True,
-                "points": [
-                    {
-                        "datetime": "2026-08-30T19:00:00+02:00",
-                        "temperature": 23.0,
-                        "condition": "sunny",
-                    },
-                    {
-                        "datetime": "2026-08-30T22:00:00+02:00",
-                        "temperature": 20.0,
-                        "condition": "clear-night",
-                    },
-                ],
-            },
+                "start": "2026-08-30T19:00:00+02:00",
+                "end": "2026-08-30T20:00:00+02:00",
+            }
         },
-    }
+    )
 
 
-def test_detailed_notification_states_shutter_semantics_and_h4_only() -> None:
-    text = build_notification_report(_h2_result())
-    assert "salon 100 % (ouvert)" in text
-    assert "terrasse 100 % (ouvert)" in text
-    assert "0 % = fermé, 100 % = ouvert" in text
-    assert "À venir H+4" in text
-    assert "2026-08-30T22:00:00+02:00" in text
-    assert "demain" not in text.lower()
+def test_expert_report_matches_hourly_pyscript_structure() -> None:
+    text = render_expert_report(_expert_report())
+    assert "## Situation" in text
+    assert "## Évolution par rapport à l’heure précédente" in text
+    assert "## ⚡ Énergie Daikin" in text
+    assert "## Explications prudentes" in text
+    assert "## Conseil pour les 2 à 4 prochaines heures" in text
+    assert "**Volets :**" in text
+    assert "**Aération :**" in text
+    assert "**Daikin :**" in text
+    assert "**À venir :**" in text
+    assert "## Points de vigilance" in text
+    assert "## Conclusion" in text
+    assert "**NORMAL.**" in text
 
 
-def test_home_assistant_persistent_notification_updates_one_ha_notification() -> None:
+def test_home_assistant_persistent_notification_publishes_expert_report_once() -> None:
     requests = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -96,13 +73,14 @@ def test_home_assistant_persistent_notification_updates_one_ha_notification() ->
         token="secret-token",
         transport=httpx.MockTransport(handler),
     )
-    result = _h2_result()
+    report = _expert_report()
 
-    first = publisher.publish(result)
-    second = publisher.publish(result)
+    first = publisher.publish(report)
+    second = publisher.publish(report)
 
     assert first["status"] == "sent"
     assert first["service"] == "persistent_notification.create"
+    assert first["analysis_id"] == "thermal-test"
     assert second["status"] == "duplicate_skipped"
     assert len(requests) == 1
     request = requests[0]
@@ -110,5 +88,8 @@ def test_home_assistant_persistent_notification_updates_one_ha_notification() ->
     assert request.headers["authorization"] == "Bearer secret-token"
     payload = json.loads(request.content)
     assert payload["notification_id"] == "maison_elise_analyse_thermique"
-    assert "Analyse thermique" in payload["title"]
-    assert "100 % (ouvert)" in payload["message"]
+    assert payload["title"] == "Analyse thermique — heure · NORMAL"
+    assert "## Situation" in payload["message"]
+    assert "Fait :" in payload["message"]
+    assert "Hypothèse :" in payload["message"]
+    assert "**NORMAL.**" in payload["message"]

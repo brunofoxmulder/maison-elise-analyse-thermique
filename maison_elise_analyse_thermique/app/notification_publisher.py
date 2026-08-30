@@ -4,33 +4,17 @@ from threading import Lock
 
 import httpx
 
-from .notification_report import build_notification_report, notification_title
+from .expert_report import notification_title, render_expert_report
 
 
 DEFAULT_NOTIFICATION_ID = "maison_elise_analyse_thermique"
-
-
-def _result_key(result: dict) -> str:
-    comparison = result.get("comparison") or {}
-    comparison_mode = comparison.get("mode")
-    expertise = result.get("expertise_h2")
-    if isinstance(expertise, dict):
-        observed_end = (expertise.get("data_window") or {}).get("observed_end")
-        if observed_end:
-            return f"h2:{observed_end}:{comparison_mode}"
-    period = result.get("period") or {}
-    return "period:{start}:{end}:{compare}".format(
-        start=period.get("start"),
-        end=period.get("end"),
-        compare=comparison_mode,
-    )
 
 
 class UnavailableNotificationPublisher:
     def __init__(self, reason: str = "home_assistant_api_unavailable") -> None:
         self.reason = reason
 
-    def publish(self, result: dict) -> dict:
+    def publish(self, report: dict) -> dict:
         return {
             "enabled": False,
             "status": "disabled",
@@ -39,12 +23,11 @@ class UnavailableNotificationPublisher:
 
 
 class HomeAssistantNotificationPublisher:
-    """Publie le rapport détaillé dans les notifications persistantes de HA.
+    """Publie dans HA le rapport expert déjà rédigé par le LLM.
 
-    Cette sortie ne commande aucun équipement. Elle appelle uniquement le
-    service ``persistent_notification.create`` de Home Assistant. Un identifiant
-    stable évite d'accumuler une pile de rapports horaires : la notification
-    Maison Élise courante est mise à jour à chaque nouvelle analyse.
+    L'App ne rédige pas l'expertise. Elle reçoit un rapport structuré lié à une
+    analyse déterministe, le met en forme et appelle uniquement
+    ``persistent_notification.create``. Aucun équipement n'est commandé.
     """
 
     def __init__(
@@ -65,7 +48,7 @@ class HomeAssistantNotificationPublisher:
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = float(timeout_seconds)
         self.transport = transport
-        self._last_key: str | None = None
+        self._last_analysis_id: str | None = None
         self._lock = Lock()
 
     def _headers(self) -> dict[str, str]:
@@ -74,21 +57,24 @@ class HomeAssistantNotificationPublisher:
             "Content-Type": "application/json",
         }
 
-    def publish(self, result: dict) -> dict:
-        key = _result_key(result)
+    def publish(self, report: dict) -> dict:
+        analysis_id = report.get("analysis_id")
+        if not isinstance(analysis_id, str) or not analysis_id:
+            raise ValueError("expert report analysis_id is required")
+
         with self._lock:
-            if self._last_key == key:
+            if self._last_analysis_id == analysis_id:
                 return {
                     "enabled": True,
                     "status": "duplicate_skipped",
                     "service": "persistent_notification.create",
                     "notification_id": self.notification_id,
-                    "key": key,
+                    "analysis_id": analysis_id,
                 }
 
         payload = {
-            "title": notification_title(result),
-            "message": build_notification_report(result),
+            "title": notification_title(report),
+            "message": render_expert_report(report),
             "notification_id": self.notification_id,
         }
         try:
@@ -105,15 +91,16 @@ class HomeAssistantNotificationPublisher:
                 "status": "error",
                 "service": "persistent_notification.create",
                 "notification_id": self.notification_id,
+                "analysis_id": analysis_id,
                 "error_type": type(exc).__name__,
             }
 
         with self._lock:
-            self._last_key = key
+            self._last_analysis_id = analysis_id
         return {
             "enabled": True,
             "status": "sent",
             "service": "persistent_notification.create",
             "notification_id": self.notification_id,
-            "key": key,
+            "analysis_id": analysis_id,
         }

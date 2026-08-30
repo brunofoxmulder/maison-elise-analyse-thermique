@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from copy import deepcopy
+import hashlib
 import json
 from datetime import datetime, time, timedelta
 import re
@@ -17,11 +17,16 @@ from .diagnostics import (
     record_resolution,
     record_result,
 )
+from .expert_report import (
+    ExpertReportStore,
+    build_expert_report,
+    render_expert_report,
+)
 from .notification_publisher import UnavailableNotificationPublisher
 from .service import ThermalAnalysisService
 
 
-AnalysisMode = Literal["current_h2", "relative_day", "explicit", "last_result"]
+AnalysisMode = Literal["current_h2", "relative_day", "explicit"]
 RelativeDay = Literal["today", "yesterday"]
 CompareMode = Literal[
     "previous_period",
@@ -33,6 +38,7 @@ CompareMode = Literal[
     "previous_month",
     "m-1",
 ]
+ReportStatus = Literal["NORMAL", "VIGILANCE", "ALERTE"]
 
 _TIME_RE = re.compile(r"^(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?$")
 
@@ -103,36 +109,81 @@ def _tool_result(result: dict) -> CallToolResult:
     )
 
 
+def _analysis_id(mode: AnalysisMode, result: dict) -> str:
+    expertise = result.get("expertise_h2")
+    observed_end = None
+    if isinstance(expertise, dict):
+        observed_end = (expertise.get("data_window") or {}).get("observed_end")
+    payload = {
+        "mode": mode,
+        "period": result.get("period"),
+        "observed_end": observed_end,
+        "comparison_mode": (result.get("comparison") or {}).get("mode"),
+    }
+    digest = hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:20]
+    return f"thermal-{digest}"
+
+
 def _apply_interaction_contract(result: dict) -> None:
     brief = build_assist_brief_facts(result)
     if brief is not None:
         result["assist_brief_facts"] = brief
 
     contract = {
+        "expertise_pipeline": {
+            "principle": "one_app_calculation_then_one_llm_expertise_then_two_outputs",
+            "required_order_for_current_hour": [
+                "AnalyseThermique",
+                "one_complete_expertise",
+                "PublierRapportThermique",
+                "reply_with_short_response",
+            ],
+            "single_expertise_rule": (
+                "short_response_and_full_report_must_be_created_from_the_same_reasoning_pass; "
+                "never_answer_short_first_then_reanalyse_for_the_report"
+            ),
+            "publication_rule": (
+                "for_the_current_hour_call_PublierRapportThermique_once_after_the_expertise; "
+                "the_App_must_not_publish_raw_deterministic_facts_before_expertise"
+            ),
+        },
         "voice_short_response": {
             "order": ["constat", "analyse", "preconisation", "a_venir"],
             "max_sentences": 5,
             "plain_text_no_markdown_headings": True,
             "internal_terms_to_hide": ["H-2", "H−2", "current_h2", "expertise_h2"],
             "fact_source_rule": (
-                "when_assist_brief_facts_is_present_use_it_as_the_only_fact_source_for_the_short_answer; "
-                "never_use_top_level_two_hour_aggregate_durations"
+                "when_assist_brief_facts_is_present_use_it_as_the_primary_fact_source_for_the_short_response; "
+                "never_use_top_level_two_hour_aggregate_durations_as_last_hour_facts"
             ),
             "recommendation_rule": (
                 "recommendation_is_optional; never_force_an_action; "
                 "prefer_no_action_needed_when_no_useful_action_is_supported_by_the_facts"
             ),
-            "a_venir_rule": (
-                "only_use_prospective_context_actually_present_in_the_result; "
-                "omit_a_venir_for_historical_requests_when_no_applicable_forecast_is_provided"
-            ),
+        },
+        "full_expert_report": {
+            "minimum_quality": "at_least_equivalent_to_historical_hourly_pyscript_llm_report",
+            "sections": [
+                "situation",
+                "evolution",
+                "energy",
+                "explanations",
+                "recommendations_volets_aeration_daikin",
+                "outlook_h4",
+                "vigilance",
+                "conclusion_status",
+            ],
+            "epistemic_rule": "distinguish_fact_observation_hypothesis_uncertainty",
         },
         "detail_follow_up": {
-            "user_phrases": ["donne-moi le détail", "donne plus de détails", "détaille"],
-            "reuse_same_analysis": True,
-            "preferred_behavior": (
-                "expand_from_the_previous_tool_result_without_a_new_analysis; "
-                "if_a_tool_call_is_needed_use_mode=last_result"
+            "user_phrases": ["donne-moi le détail", "donne plus de détails", "détaille", "plus de détails"],
+            "tool": "DernierRapportThermique",
+            "reuse_same_expertise": True,
+            "rule": (
+                "never_call_AnalyseThermique_and_never_redo_the_expertise_for_a_detail_follow_up; "
+                "retrieve_and_speak_the_already_published_full_report"
             ),
         },
         "shutter_position_semantics": {
@@ -156,10 +207,6 @@ def _apply_interaction_contract(result: dict) -> None:
             "forecast_h4_is_the_only_prospective_horizon_provided_by_this_H2_result; "
             "never_mention_tomorrow_or_any_time_after_the_last_forecast_h4_point_unless_the_user_explicitly_requests_another_forecast"
         ),
-        "automatic_notification_rule": (
-            "a_detailed_deterministic_report_is_published_automatically_as_a_Home_Assistant_persistent_notification; "
-            "do_not_repeat_the_full_notification_content_in_the_short_voice_answer"
-        ),
     }
     result["interaction_contract"] = contract
 
@@ -176,19 +223,9 @@ def _apply_interaction_contract(result: dict) -> None:
             "forecast_scope_rule": contract["forecast_horizon_rule"],
             "humidity_advice_rule": contract["humidity_rule"],
             "causality_rule": contract["causality_rule"],
-            "voice_ergonomics_rule": (
-                "short_voice_answer_is_plain_text_few_sentences_in_order_constat_analyse_preconisation_a_venir; "
-                "when_assist_brief_facts_exists_use_it_only; detail_is_expanded_only_on_user_request"
-            ),
+            "expertise_then_publication_rule": contract["expertise_pipeline"],
         }
     )
-    response_contract = analysis_contract.get("response_contract")
-    if isinstance(response_contract, dict):
-        response_contract["assist_voice_rule"] = (
-            "plain_text_only; few_sentences; order_constat_analyse_preconisation_a_venir; "
-            "no_markdown_headings; hide_internal_H2_terms; use_assist_brief_facts_only_when_present; "
-            "expand_only_when_user_requests_detail"
-        )
 
 
 def build_mcp_server(
@@ -204,13 +241,15 @@ def build_mcp_server(
     if notification_publisher is None:
         notification_publisher = UnavailableNotificationPublisher()
 
-    last_result: dict | None = None
+    last_analysis_id: str | None = None
+    last_analysis_result: dict | None = None
+    report_store = ExpertReportStore()
 
     mcp = FastMCP(
         name="Maison Élise — Analyse thermique",
         instructions=(
-            "Serveur d'analyse thermique déterministe. "
-            "Le client choisit le type de période et interprète le JSON sans recalculer les chiffres."
+            "Serveur thermique : l'App calcule les faits, le LLM réalise une seule expertise, "
+            "puis publie cette même expertise dans Home Assistant et en extrait la réponse courte."
         ),
         host="0.0.0.0",
         stateless_http=True,
@@ -220,32 +259,19 @@ def build_mcp_server(
     @mcp.tool(
         name="AnalyseThermique",
         description=(
-            "Analyse thermique déterministe. Pour la demande naturelle 'Analyse heure', 'analyse de l'heure', "
-            "'analyse actuelle' ou équivalent, utiliser mode=current_h2 : l'App résout elle-même les deux dernières "
-            "heures avec son horloge Europe/Paris ; ne jamais calculer start/end côté LLM. "
-            "Pour 'aujourd'hui entre 13 h et 17 h' ou 'hier entre 8 h et 15 h', utiliser mode=relative_day avec "
-            "day=today|yesterday et start_time/end_time ; l'App résout elle-même la date locale. "
-            "Pour une date historique absolue, utiliser mode=explicit avec start/end ISO 8601 avec fuseau. "
-            "Après une analyse, si l'utilisateur demande le détail ('donne-moi le détail', 'donne plus de détails', "
-            "'détaille'), privilégier le résultat déjà présent dans la conversation ; si un nouvel appel tool est "
-            "nécessaire, utiliser mode=last_result afin de réutiliser exactement la dernière analyse sans recalcul ni "
-            "nouvelle notification. Pour une réponse vocale normale, faire seulement quelques phrases dans cet ordre : "
-            "constat, analyse prudente, préconisation si réellement utile, à venir. Ne pas afficher de titres Markdown, "
-            "ne pas citer H-2/current_h2 ni les noms internes. Quand assist_brief_facts est présent, l'utiliser comme "
-            "SEULE source factuelle de la réponse courte : ne jamais reprendre les durées ou agrégats top-level des deux "
-            "heures. Le détail complet est envoyé automatiquement dans une notification persistante Home Assistant. "
-            "Quand expertise_h2 est présent, last_hour est le sujet principal et previous_hour la référence. "
-            "Les chiffres déterministes sont la source de vérité : ne pas les recalculer. Suivre analysis_contract, "
-            "interaction_contract et toutes les interpretation_rule du JSON. Distinguer Fait / Observation / Hypothèse / "
-            "Incertitude. Convention volets : 0 %=fermé, 100 %=ouvert ; ne jamais inverser cette convention et ne pas "
-            "conseiller de fermer/ouvrir sans faits solaires pertinents. L'humidité relative seule ne suffit jamais pour "
-            "conseiller aération ou déshumidification : utiliser aussi température et humidité absolue. La température "
-            "extérieure est un contexte et ne doit pas être présentée seule comme la cause du refroidissement continu. "
-            "La température Daikin terrasse n'est jamais la météo ni une preuve que le compresseur peine. Un extérieur "
-            "plus frais ne signifie jamais automatiquement qu'il faut aérer. forecast_h4 est le seul horizon prospectif : "
-            "ne jamais parler de demain ou d'un instant situé après le dernier point forecast_h4 sauf demande explicite. "
-            "Une préconisation n'est pas obligatoire : si rien d'utile n'est justifié, dire simplement qu'aucune action "
-            "particulière n'est nécessaire. Utiliser NORMAL / VIGILANCE / ALERTE seulement si utile, sans alarmisme."
+            "Étape 1 du flux thermique. Calcule uniquement les faits déterministes : ne publie PAS de notification. "
+            "Pour 'Analyse heure', 'analyse de l'heure', 'analyse actuelle' ou équivalent, utiliser mode=current_h2 ; "
+            "l'App résout elle-même les deux dernières heures avec son horloge Europe/Paris, sans start/end calculés par le LLM. "
+            "Pour aujourd'hui/hier avec heures locales, utiliser mode=relative_day. Pour une date absolue historique, mode=explicit. "
+            "Après un current_h2 réussi, réaliser UNE SEULE expertise complète à partir du JSON, en produisant dans la même réflexion "
+            "la réponse courte et le rapport complet. Puis appeler OBLIGATOIREMENT PublierRapportThermique avec l'analysis_id retourné. "
+            "Seulement après cette publication, répondre à l'utilisateur avec le short_response du rapport, sans refaire l'analyse. "
+            "Qualité minimale du rapport complet : au moins équivalente au rapport horaire historique Pyscript rédigé par l'agent, "
+            "avec Situation, Évolution, Énergie Daikin, Explications prudentes, Conseils Volets/Aération/Daikin, À venir H+4, Vigilance "
+            "et Conclusion NORMAL/VIGILANCE/ALERTE. Les chiffres déterministes sont la source de vérité : ne pas recalculer. "
+            "Convention volets 0 %=fermé, 100 %=ouvert. RH seule insuffisante pour aérer. Température Daikin terrasse = microclimat, "
+            "jamais météo ni preuve de difficulté compresseur. Un extérieur plus frais n'implique pas automatiquement qu'il faut aérer. "
+            "forecast_h4 est le seul horizon prospectif. Pour 'plus de détails', NE PAS rappeler AnalyseThermique : utiliser DernierRapportThermique."
         ),
     )
     def analyse_thermique(
@@ -257,18 +283,7 @@ def build_mcp_server(
         start_time: str | None = None,
         end_time: str | None = None,
     ) -> CallToolResult:
-        nonlocal last_result
-
-        if mode == "last_result":
-            if last_result is None:
-                raise ValueError("no previous thermal analysis is cached in this App process")
-            reused = deepcopy(last_result)
-            reused["interaction_context"] = {
-                "reused_previous_analysis": True,
-                "fresh_analysis": False,
-                "automatic_notification_repeated": False,
-            }
-            return _tool_result(reused)
+        nonlocal last_analysis_id, last_analysis_result
 
         received_start = start
         received_end = end
@@ -311,16 +326,117 @@ def build_mcp_server(
             raise
 
         _apply_interaction_contract(result)
-        delivery = notification_publisher.publish(result)
-        result["automatic_notification"] = delivery
+        analysis_id = _analysis_id(mode, result)
+        result["analysis_id"] = analysis_id
+        result["expert_report_publication"] = {
+            "required": mode == "current_h2",
+            "status": "pending_expertise" if mode == "current_h2" else "optional",
+            "next_tool": "PublierRapportThermique" if mode == "current_h2" else None,
+            "rule": "publication_occurs_only_after_the_LLM_has_completed_the_single_expertise",
+        }
         result["interaction_context"] = {
-            "reused_previous_analysis": False,
             "fresh_analysis": True,
-            "detail_follow_up_mode": "last_result",
             "voice_request_alias": "Analyse heure" if mode == "current_h2" else None,
         }
-        last_result = deepcopy(result)
+        last_analysis_id = analysis_id
+        last_analysis_result = result
         record_result(result)
         return _tool_result(result)
+
+    @mcp.tool(
+        name="PublierRapportThermique",
+        description=(
+            "Étape 2 OBLIGATOIRE après AnalyseThermique mode=current_h2. À appeler UNE SEULE FOIS après avoir réalisé l'expertise complète. "
+            "Tous les champs doivent provenir de la MÊME expertise : short_response est la synthèse vocale de ce rapport, pas une analyse séparée. "
+            "analysis_id doit être recopié exactement depuis AnalyseThermique ; l'App refuse un rapport détaché de la dernière analyse. "
+            "Le rapport doit être au minimum équivalent au Pyscript horaire expert : Situation, Évolution, Énergie Daikin, Explications prudentes, "
+            "Volets, Aération, Daikin, À venir H+4, Vigilance, Conclusion avec statut NORMAL/VIGILANCE/ALERTE. "
+            "Ne recalculer aucun chiffre et ne transformer aucune corrélation en cause certaine. Ce tool publie le rapport complet en notification "
+            "persistante Home Assistant, mémorise exactement cette expertise pour 'plus de détails', puis renvoie short_response. "
+            "Après son succès, répondre à l'utilisateur avec short_response uniquement, en quelques phrases."
+        ),
+    )
+    def publier_rapport_thermique(
+        analysis_id: str,
+        status: ReportStatus,
+        short_response: str,
+        situation: str,
+        evolution: str,
+        energy: str,
+        explanations: str,
+        shutters_advice: str,
+        ventilation_advice: str,
+        daikin_advice: str,
+        outlook: str,
+        vigilance: str,
+        conclusion: str,
+    ) -> CallToolResult:
+        if last_analysis_id is None or last_analysis_result is None:
+            raise ValueError("no thermal analysis is awaiting an expert report")
+        if analysis_id != last_analysis_id:
+            raise ValueError("analysis_id does not match the latest thermal analysis")
+
+        expertise = last_analysis_result.get("expertise_h2")
+        primary_period = None
+        if isinstance(expertise, dict):
+            primary_period = expertise.get("primary_period")
+        source_period = {
+            "analysis_period": last_analysis_result.get("period"),
+            "primary_period": primary_period,
+        }
+        report = build_expert_report(
+            analysis_id=analysis_id,
+            status=status,
+            short_response=short_response,
+            situation=situation,
+            evolution=evolution,
+            energy=energy,
+            explanations=explanations,
+            shutters_advice=shutters_advice,
+            ventilation_advice=ventilation_advice,
+            daikin_advice=daikin_advice,
+            outlook=outlook,
+            vigilance=vigilance,
+            conclusion=conclusion,
+            source_period=source_period,
+        )
+        report_store.save(report)
+        delivery = notification_publisher.publish(report)
+        rendered = render_expert_report(report)
+        return _tool_result(
+            {
+                "analysis_id": analysis_id,
+                "status": status,
+                "publication": delivery,
+                "short_response": report["short_response"],
+                "full_report": rendered,
+                "instruction": "reply_to_user_with_short_response_only_unless_the_user_asked_for_detail",
+            }
+        )
+
+    @mcp.tool(
+        name="DernierRapportThermique",
+        description=(
+            "À utiliser uniquement quand l'utilisateur demande 'plus de détails', 'donne-moi le détail', 'détaille' ou équivalent "
+            "après une analyse thermique déjà publiée. Retourne EXACTEMENT le dernier rapport expert mémorisé. "
+            "Ne pas appeler AnalyseThermique, ne pas recalculer et ne pas refaire une expertise. Lire/restituer full_report."
+        ),
+    )
+    def dernier_rapport_thermique() -> CallToolResult:
+        report = report_store.get()
+        if report is None:
+            raise ValueError("no expert thermal report has been published in this App process")
+        return _tool_result(
+            {
+                "analysis_id": report["analysis_id"],
+                "status": report["status"],
+                "short_response": report["short_response"],
+                "full_report": render_expert_report(report),
+                "reused_previous_expertise": True,
+                "recalculation": False,
+                "new_expertise": False,
+                "new_notification": False,
+            }
+        )
 
     return mcp
