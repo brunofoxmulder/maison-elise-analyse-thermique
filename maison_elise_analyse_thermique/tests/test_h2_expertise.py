@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.google_sheets_source import _row_to_sample
+from app.h2_trend import classify_temperature_evolution
 from app.models import ThermalSample
 from app.service import ThermalAnalysisService
 
@@ -102,6 +103,9 @@ def test_h2_contract_uses_last_hour_as_primary_and_previous_as_reference() -> No
 
     assert h2["comparison"]["active_setpoint_delta_c"] == 2.0
     assert h2["comparison"]["cool_energy_last_hour_observation_delta_kwh"] == -0.05
+    assert h2["comparison"]["temperature_evolution_classification"]["source_rule"] == (
+        "pyscript_horaire_v5_qualifier_tendance"
+    )
 
 
 def test_h2_air_properties_do_not_treat_relative_humidity_alone_as_ventilation_rule() -> None:
@@ -134,3 +138,31 @@ def test_h2_enrichment_is_not_added_to_a_full_day() -> None:
     end = start + timedelta(days=1)
     result = ThermalAnalysisService(FakeSource(samples)).analyse(start, end)
     assert "expertise_h2" not in result
+
+
+def test_h2_historical_temperature_classifier_preserves_v5_semantics() -> None:
+    stable = classify_temperature_evolution(0.05, 0.10)
+    assert stable["id"] == "stable_both_hours"
+    assert stable["threshold_c"] == 0.15
+
+    stabilizing = classify_temperature_evolution(0.40, 0.10)
+    assert stabilizing["id"] == "stabilizing_last_hour"
+
+    reversal = classify_temperature_evolution(0.30, -0.30)
+    assert reversal["id"] == "trend_reversal"
+
+    warming_accelerating = classify_temperature_evolution(0.20, 0.50)
+    assert warming_accelerating["id"] == "warming_accelerating"
+
+    cooling_slowing = classify_temperature_evolution(-0.50, -0.20)
+    assert cooling_slowing["id"] == "cooling_slowing"
+
+
+def test_h2_classification_is_exposed_in_the_service_contract() -> None:
+    start, end, samples = _two_hours()
+    h2 = ThermalAnalysisService(FakeSource(samples)).analyse(start, end)["expertise_h2"]
+    classification = h2["comparison"]["temperature_evolution_classification"]
+
+    assert classification["id"] == "warming_accelerating"
+    assert classification["threshold_c"] == 0.15
+    assert classification["interpretation_rule"] == "deterministic_classification_not_causal_explanation"
