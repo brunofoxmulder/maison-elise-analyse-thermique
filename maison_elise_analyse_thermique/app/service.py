@@ -78,9 +78,17 @@ class ThermalAnalysisService:
                     "when_expertise_h2_is_present_use_it_as_the_primary_H2_material; "
                     "top_level_analysis_is_the_legacy_two_hour_aggregate_and_is_not_the_primary_H2_summary"
                 ),
+                "quality_rule": (
+                    "if_hourly_coverage_or_data_quality_is_insufficient_weaken_the_conclusion_explicitly; "
+                    "never_fill_missing_measurements_by_guessing"
+                ),
                 "evidence_rule": (
                     "distinguish_fact_observation_hypothesis_and_uncertainty; "
                     "correlation_or_simultaneity_is_not_proven_causality"
+                ),
+                "setpoint_transition_rule": (
+                    "after_an_active_setpoint_change_treat_a_temporary_temperature_gap_as_possible_inertia; "
+                    "do_not_call_it_bad_regulation_without_supporting_evidence"
                 ),
                 "compressor_rule": (
                     "assess_daikin_with_hvac_action_frequency_energy_indoor_temperature_active_setpoint_"
@@ -89,6 +97,14 @@ class ThermalAnalysisService:
                 "dehumidification_rule": (
                     "if_indoor_temperature_is_near_setpoint_while_cooling_continues_and_humidity_is_high_"
                     "dehumidification_or_modulation_may_be_compatible_explanations_but_are_not_proven_causes"
+                ),
+                "ventilation_context_rule": (
+                    "ventilation_can_renew_air_or_change_temperature_or_moisture_and_can_temporarily_help_daikin; "
+                    "apply_the_same_temperature_and_moisture_reasoning_in_cooling_and_heating_modes"
+                ),
+                "solar_rule": (
+                    "distinguish_solar_geometry_bright_sky_and_effective_sun; "
+                    "lux_alone_does_not_prove_direct_solar_heat_and_simultaneous_shutter_changes_do_not_prove_causality"
                 ),
                 "forecast_rule": (
                     "h4_forecast_is_prospective_context_not_a_certainty; "
@@ -99,6 +115,11 @@ class ThermalAnalysisService:
                 ),
                 "response_contract": {
                     "status": ["NORMAL", "VIGILANCE", "ALERTE"],
+                    "status_rules": {
+                        "NORMAL": "coherent_operation_without_significant_drift_found",
+                        "VIGILANCE": "measured_evolution_or_combination_of_facts_to_watch_without_proven_serious_anomaly",
+                        "ALERTE": "use_only_for_clearly_abnormal_or_concerning_measured_situations_and_do_not_be_alarmist",
+                    },
                     "sections": [
                         "Situation",
                         "Évolution entre les deux heures",
