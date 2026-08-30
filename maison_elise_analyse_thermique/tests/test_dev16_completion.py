@@ -76,3 +76,10 @@ def test_metier_context_v11_matches_current_architecture():
     assert METIER_CONTEXT["life_state"]["unknown"] == "do_not_infer"
     assert METIER_CONTEXT["daikin"]["power_w_rule"] == "instantaneous_W_values_are_not_used_for_current_thermal_expertise"
     assert METIER_CONTEXT["setpoint"]["wording"] == "écart à la consigne / écart moyen à la consigne"
+
+
+def test_day_report_requests_detailed_compressor_solicitation():
+    rule = METIER_CONTEXT["reporting"]["day_compressor_solicitation"]
+    assert "stopped_very_low_low_medium_and_high_minutes" in rule
+    assert "unknown_minutes_if_nonzero" in rule
+    assert "do_not_replace_this_detail_with_only_one_average" in rule
