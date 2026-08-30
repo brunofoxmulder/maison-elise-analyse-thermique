@@ -2,6 +2,7 @@ from datetime import timedelta
 
 from .comparison_facts import build_comparison_facts
 from .config import AnalysisConfig
+from .day_profile import build_setpoint_profiles
 from .energy_quality import apply_energy_temporal_coverage
 from .engine import analyse_samples, compare_results
 from .facts import build_thermal_facts
@@ -230,9 +231,14 @@ class ThermalAnalysisService:
     def analyse(self, start, end, compare=None):
         validate_period(start, end)
         period = {"start": start.isoformat(), "end": end.isoformat()}
-        current = self._analyse_period(start, end)
+        current, current_samples = self._prepare_period(start, end)
         current_facts = build_thermal_facts(current)
-        out = {"period": period, "analysis": current, "thermal_facts": current_facts}
+        out = {
+            "period": period,
+            "analysis": current,
+            "thermal_facts": current_facts,
+            "setpoint_profiles": build_setpoint_profiles(current_samples),
+        }
 
         # Le profil H-2 est enrichi automatiquement lorsque le client demande
         # environ deux heures. La dernière heure est le sujet principal ;
@@ -242,7 +248,7 @@ class ThermalAnalysisService:
 
         if compare is not None:
             rs, re = reference_period(start, end, compare)
-            reference = self._analyse_period(rs, re)
+            reference, reference_samples = self._prepare_period(rs, re)
             reference_facts = build_thermal_facts(reference)
             delta = compare_results(current, reference)
             current_period_ok = current.get("period_coverage", {}).get("strong_period_summary_allowed", False)
@@ -259,6 +265,7 @@ class ThermalAnalysisService:
                 "period": {"start": rs.isoformat(), "end": re.isoformat()},
                 "analysis": reference,
                 "thermal_facts": reference_facts,
+                "setpoint_profiles": build_setpoint_profiles(reference_samples),
                 "comparison_quality": {
                     "strong_comparison_allowed": strong_comparison_allowed,
                     "current_period_coverage": current.get("period_coverage", {}).get("coverage"),
