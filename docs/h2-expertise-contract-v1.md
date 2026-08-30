@@ -50,11 +50,11 @@ Pour une période demandée d’environ deux heures, le service ajoute :
 
 Chaque bloc horaire contient l’analyse existante et les enrichissements H−2. La comparaison fournit les deltas déterministes utiles sans produire de conclusion causale.
 
-`analysis_contract` identifie également `prompt_version = h2-expert-v1` et le format de réponse attendu : NORMAL/VIGILANCE/ALERTE, situation, évolution, explications prudentes, conseil 2–4 h, vigilance, conclusion, avec conseils Volets / Aération / Daikin.
+`analysis_contract` identifie également `prompt_version = h2-expert-v1`, rappelle que `expertise_h2` est la matière principale pour une réponse H−2 et que le `analysis` de premier niveau reste seulement l’agrégat historique des deux heures. Il contient aussi les règles de preuve, de lecture du compresseur, de prudence sur déshumidification/modulation et le format de réponse attendu : NORMAL/VIGILANCE/ALERTE, situation, évolution, explications prudentes, conseil 2–4 h, vigilance, conclusion, avec conseils Volets / Aération / Daikin.
 
 ## Météo H+4 — décision d’architecture
 
-La prévision horaire H+4 provient de l’entité Home Assistant `weather.dammarie_les_lys` via l’action native `weather.get_forecasts` appelée par l’API Core interne de Home Assistant.
+La prévision horaire H+4 provient de l’entité Home Assistant configurée dans l’App via `weather_entity`, par l’action native `weather.get_forecasts` appelée via l’API Core interne de Home Assistant. La valeur par défaut historique est `weather.dammarie_les_lys`, mais elle n’est pas une constante métier imposée.
 
 Décision : ne pas créer de fournisseur météo parallèle ni recopier la logique météo dans l’App.
 
@@ -70,11 +70,15 @@ La météo H+4 est facultative et non bloquante :
 - une demande H−2 historique ne reçoit pas la météo actuelle comme si elle représentait le passé ;
 - le vent extérieur est seulement un contexte de potentiel d’aération, jamais une preuve de courant d’air dans le logement.
 
-## Prompt expert
+## Prompt expert et transport MCP natif
 
 Le prompt de référence est versionné dans `docs/h2-expert-prompt-v1.md`.
 
 Il conserve les principes historiques du Pyscript horaire et du référentiel métier clim, mais ajoute explicitement les règles validées le 30/08/2026 : consigne active, humidité absolue/point de rosée, distinction renouvellement d’air / stratégie thermique, aération pouvant aider le Daikin sans être automatiquement optimale, raisonnement été/hiver et microclimat terrasse non causal.
+
+**Découverte de revue pré-merge :** dans Home Assistant 2026.8.3, l’intégration MCP native expose au LLM un prompt générique côté HA et la `description` des tools ; les `instructions` renvoyées lors de l’initialisation du serveur MCP ne sont pas reprises dans l’API LLM. Par conséquent, le fichier Markdown ne suffit pas à garantir le comportement terrain.
+
+Décision dev.8 : les règles indispensables du prompt sont aussi rendues visibles à Assist/Mistral dans la `description` du tool `AnalyseThermique` et dans `analysis_contract` / les `interpretation_rule` du JSON. Le prompt long reste la source documentaire versionnée ; le contrat compact est celui effectivement transporté jusqu’au LLM par le chemin natif HA.
 
 ## Critère de recette dev.8 H−2
 
